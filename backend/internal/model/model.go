@@ -114,6 +114,7 @@ type Order struct {
 	StartedAt          *time.Time     `json:"started_at,omitempty"`
 	CompletedAt        *time.Time     `json:"completed_at,omitempty"`
 	CancelledAt        *time.Time     `json:"cancelled_at,omitempty"`
+	RemindedAt         *time.Time     `json:"reminded_at,omitempty"`
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
 }
@@ -127,6 +128,40 @@ type Review struct {
 	Rating    int        `json:"rating"`
 	Comment   *string    `json:"comment,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
+}
+
+type Webhook struct {
+	ID          uuid.UUID `json:"id"`
+	TenantID    uuid.UUID `json:"tenant_id"`
+	URL         string    `json:"url"`
+	Secret      string    `json:"secret"`
+	Events      []string  `json:"events"`
+	Description *string   `json:"description,omitempty"`
+	IsActive    bool      `json:"is_active"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type WebhookDeliveryStatus string
+
+const (
+	DeliveryPending WebhookDeliveryStatus = "pending"
+	DeliverySuccess WebhookDeliveryStatus = "success"
+	DeliveryFailed  WebhookDeliveryStatus = "failed"
+)
+
+type WebhookDelivery struct {
+	ID            uuid.UUID             `json:"id"`
+	WebhookID     uuid.UUID             `json:"webhook_id"`
+	TenantID      uuid.UUID             `json:"tenant_id"`
+	EventType     string                `json:"event_type"`
+	Payload       []byte                `json:"-"`
+	Status        WebhookDeliveryStatus `json:"status"`
+	Attempts      int                   `json:"attempts"`
+	NextAttemptAt time.Time             `json:"next_attempt_at"`
+	LastAttemptAt *time.Time            `json:"last_attempt_at,omitempty"`
+	ResponseCode  *int                  `json:"response_code,omitempty"`
+	Error         *string               `json:"error,omitempty"`
+	CreatedAt     time.Time             `json:"created_at"`
 }
 
 type BotSession struct {

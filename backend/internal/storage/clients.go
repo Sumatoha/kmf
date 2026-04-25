@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -62,6 +63,33 @@ func (r *ClientRepo) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]*m
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// UpsertByPhone is used when an admin creates a phone-in order for a client
+// who isn't on Telegram. Phone uniqueness is per-tenant and enforced in code
+// (we look up by tenant + phone first, create if missing).
+func (r *ClientRepo) UpsertByPhone(ctx context.Context, tenantID uuid.UUID, phone string, fullName *string) (*model.Client, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+clientCols+` FROM clients WHERE tenant_id = $1 AND phone = $2 LIMIT 1`,
+		tenantID, phone)
+	c, err := scanClient(row)
+	if err == nil {
+		if fullName != nil && (c.FullName == nil || *c.FullName == "") {
+			if e := r.UpdateContact(ctx, c.ID, fullName, nil); e != nil {
+				return nil, e
+			}
+			c.FullName = fullName
+		}
+		return c, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	row = r.pool.QueryRow(ctx, `
+		INSERT INTO clients (tenant_id, full_name, phone)
+		VALUES ($1, $2, $3)
+		RETURNING `+clientCols, tenantID, fullName, phone)
+	return scanClient(row)
 }
 
 func (r *ClientRepo) UpdateContact(ctx context.Context, id uuid.UUID, fullName, phone *string) error {

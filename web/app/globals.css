@@ -45,6 +45,16 @@
   }
 }
 
+/* Dark-mode token overrides. Activated by `data-theme="dark"` on <html>. */
+html[data-theme="dark"] {
+  --color-bg: #0a0a0b;
+  --color-surface: #131316;
+  --color-surface-2: #1c1c20;
+  --color-border: #2a2a30;
+  --color-text: #ededf0;
+  --color-text-muted: #a1a1aa;
+}
+
 html, body {
   background: var(--color-bg);
   color: var(--color-text);
@@ -62,25 +72,37 @@ html, body {
   color: var(--color-brand-900);
 }
 
-/* Decorative grid pattern */
 .bg-grid {
   background-image:
     linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px);
   background-size: 48px 48px;
 }
+html[data-theme="dark"] .bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.05) 1px, transparent 1px);
+}
 
 .bg-dots {
   background-image: radial-gradient(rgba(0,0,0,0.08) 1px, transparent 1px);
   background-size: 20px 20px;
 }
+html[data-theme="dark"] .bg-dots {
+  background-image: radial-gradient(rgba(255,255,255,0.08) 1px, transparent 1px);
+}
 
-/* Mesh gradient for hero */
 .mesh-bg {
   background:
     radial-gradient(ellipse at top left, rgba(16,185,129,0.18), transparent 50%),
     radial-gradient(ellipse at top right, rgba(56,189,248,0.12), transparent 50%),
     radial-gradient(ellipse at bottom, rgba(167,243,208,0.18), transparent 60%);
+}
+html[data-theme="dark"] .mesh-bg {
+  background:
+    radial-gradient(ellipse at top left, rgba(16,185,129,0.10), transparent 60%),
+    radial-gradient(ellipse at top right, rgba(56,189,248,0.07), transparent 60%),
+    radial-gradient(ellipse at bottom, rgba(16,185,129,0.10), transparent 70%);
 }
 
 .gradient-text {
@@ -89,9 +111,17 @@ html, body {
   background-clip: text;
   color: transparent;
 }
+html[data-theme="dark"] .gradient-text {
+  background: linear-gradient(135deg, var(--color-brand-400) 0%, var(--color-brand-300) 50%, #5eead4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
 
 .glass {
   background: rgba(255, 255, 255, 0.7);
   backdrop-filter: saturate(180%) blur(12px);
   -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+html[data-theme="dark"] .glass {
+  background: rgba(19, 19, 22, 0.7);
 }

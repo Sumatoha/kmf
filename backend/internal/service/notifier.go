@@ -15,6 +15,9 @@ type Notifier interface {
 	NotifyOrderStartedToClient(ctx context.Context, client *model.Client, order *model.Order) error
 	NotifyOrderCompletedToClient(ctx context.Context, client *model.Client, order *model.Order) error
 	NotifyOrderCancelledToMaster(ctx context.Context, master *model.Master, order *model.Order) error
+
+	NotifyClientText(ctx context.Context, client *model.Client, text string)
+	NotifyMasterText(ctx context.Context, master *model.Master, text string)
 }
 
 // NoopNotifier is a fallback used when bot tokens are not configured.
@@ -35,3 +38,5 @@ func (NoopNotifier) NotifyOrderCompletedToClient(context.Context, *model.Client,
 func (NoopNotifier) NotifyOrderCancelledToMaster(context.Context, *model.Master, *model.Order) error {
 	return nil
 }
+func (NoopNotifier) NotifyClientText(context.Context, *model.Client, string) {}
+func (NoopNotifier) NotifyMasterText(context.Context, *model.Master, string) {}

@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -15,19 +18,23 @@ import (
 var (
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrUserInactive       = errors.New("user is inactive")
+	ErrSlugTaken          = errors.New("tenant slug already taken")
+	ErrEmailTaken         = errors.New("email already registered")
 )
 
 type AuthService struct {
 	users     *storage.UserRepo
+	tenants   *storage.TenantRepo
+	services  *storage.ServiceRepo
 	jwtSecret []byte
 	ttl       time.Duration
 }
 
-func NewAuthService(users *storage.UserRepo, jwtSecret string, ttl time.Duration) *AuthService {
+func NewAuthService(users *storage.UserRepo, tenants *storage.TenantRepo, services *storage.ServiceRepo, jwtSecret string, ttl time.Duration) *AuthService {
 	if ttl == 0 {
 		ttl = 7 * 24 * time.Hour
 	}
-	return &AuthService{users: users, jwtSecret: []byte(jwtSecret), ttl: ttl}
+	return &AuthService{users: users, tenants: tenants, services: services, jwtSecret: []byte(jwtSecret), ttl: ttl}
 }
 
 type Claims struct {
@@ -90,6 +97,79 @@ func (s *AuthService) Verify(token string) (*Claims, error) {
 		return nil, errors.New("invalid token")
 	}
 	return claims, nil
+}
+
+type RegisterInput struct {
+	TenantSlug string
+	TenantName string
+	Email      string
+	Password   string
+	FullName   string
+}
+
+// Register creates a new tenant with an owner user and seeds 3 default
+// services so the company can start taking bookings immediately. Returns
+// a login token for the new owner.
+func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*LoginResult, error) {
+	in.TenantSlug = strings.ToLower(strings.TrimSpace(in.TenantSlug))
+	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+	if !slugRe.MatchString(in.TenantSlug) {
+		return nil, fmt.Errorf("invalid slug (use a-z, 0-9, dashes; 3-32 chars)")
+	}
+	if len(in.Password) < 6 {
+		return nil, fmt.Errorf("password must be at least 6 characters")
+	}
+
+	if _, err := s.tenants.GetBySlug(ctx, in.TenantSlug); err == nil {
+		return nil, ErrSlugTaken
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		return nil, err
+	}
+	if _, err := s.users.GetByEmail(ctx, in.Email); err == nil {
+		return nil, ErrEmailTaken
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		return nil, err
+	}
+
+	tenant, err := s.tenants.Create(ctx, in.TenantSlug, in.TenantName)
+	if err != nil {
+		return nil, fmt.Errorf("create tenant: %w", err)
+	}
+	hash, err := HashPassword(in.Password)
+	if err != nil {
+		return nil, err
+	}
+	user, err := s.users.Create(ctx, tenant.ID, in.Email, hash, in.FullName, model.RoleOwner)
+	if err != nil {
+		return nil, fmt.Errorf("create user: %w", err)
+	}
+	if s.services != nil {
+		seedDefaultServices(ctx, s.services, tenant.ID)
+	}
+	tok, err := s.issue(user)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{Token: tok, User: user}, nil
+}
+
+var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$`)
+
+func seedDefaultServices(ctx context.Context, repo *storage.ServiceRepo, tenantID uuid.UUID) {
+	defaults := []struct {
+		name     string
+		desc     string
+		price    float64
+		duration int
+	}{
+		{"Стандартная уборка", "Регулярная уборка квартиры", 3500, 120},
+		{"Генеральная уборка", "Тщательная уборка всех поверхностей", 7500, 300},
+		{"Уборка после ремонта", "Уборка строительной пыли и мусора", 12000, 480},
+	}
+	for _, d := range defaults {
+		desc := d.desc
+		_, _ = repo.Create(ctx, tenantID, d.name, &desc, d.price, d.duration)
+	}
 }
 
 func HashPassword(password string) (string, error) {

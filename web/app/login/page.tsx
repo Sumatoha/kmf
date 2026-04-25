@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
@@ -79,7 +80,10 @@ export default function LoginPage() {
               </Button>
             </form>
             <p className="text-xs text-[var(--color-text-muted)] mt-4 text-center">
-              Создайте первого пользователя командой <code className="font-mono">make admin</code>
+              Нет аккаунта?{" "}
+              <Link href="/signup" className="text-[var(--color-brand-700)] font-medium">
+                Зарегистрировать компанию
+              </Link>
             </p>
           </CardContent>
         </Card>

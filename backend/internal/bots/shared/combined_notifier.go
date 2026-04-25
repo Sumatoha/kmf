@@ -50,3 +50,17 @@ func (c *CombinedNotifier) NotifyOrderCancelledToMaster(ctx context.Context, m *
 	}
 	return c.Master.NotifyOrderCancelledToMaster(ctx, m, o)
 }
+
+func (c *CombinedNotifier) NotifyClientText(ctx context.Context, cl *model.Client, text string) {
+	if c.Client == nil {
+		return
+	}
+	c.Client.NotifyClientText(ctx, cl, text)
+}
+
+func (c *CombinedNotifier) NotifyMasterText(ctx context.Context, m *model.Master, text string) {
+	if c.Master == nil {
+		return
+	}
+	c.Master.NotifyMasterText(ctx, m, text)
+}

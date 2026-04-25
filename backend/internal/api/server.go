@@ -17,6 +17,8 @@ type Deps struct {
 	Auth     *service.AuthService
 	Orders   *service.OrderService
 	Masters  *service.MasterService
+	Webhooks *service.WebhookService
+
 	Tenants  *storage.TenantRepo
 	Clients  *storage.ClientRepo
 	Services *storage.ServiceRepo
@@ -50,6 +52,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		// public
 		r.Post("/auth/login", loginHandler(d))
+		r.Post("/auth/register", registerHandler(d))
 
 		// protected (CRM)
 		r.Group(func(r chi.Router) {
@@ -75,9 +78,21 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Route("/orders", func(r chi.Router) {
 				r.Get("/", listOrdersHandler(d))
+				r.Post("/", createOrderHandler(d))
 				r.Get("/{id}", getOrderHandler(d))
 				r.Post("/{id}/assign", assignOrderHandler(d))
 				r.Post("/{id}/cancel", cancelOrderHandler(d))
+			})
+
+			r.Route("/webhooks", func(r chi.Router) {
+				r.Get("/", listWebhooksHandler(d))
+				r.Post("/", createWebhookHandler(d))
+				r.Delete("/{id}", deleteWebhookHandler(d))
+			})
+
+			r.Route("/exports", func(r chi.Router) {
+				r.Get("/orders.csv", exportOrdersCSV(d))
+				r.Get("/clients.csv", exportClientsCSV(d))
 			})
 
 			r.Get("/dashboard/stats", dashboardStatsHandler(d))

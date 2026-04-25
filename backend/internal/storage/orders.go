@@ -16,7 +16,7 @@ func NewOrderRepo(pool *pgxpool.Pool) *OrderRepo { return &OrderRepo{pool: pool}
 
 const orderCols = `id, tenant_id, client_id, service_id, master_id, address_text, scheduled_at,
 	status, price, notes, cancellation_reason,
-	assigned_at, confirmed_at, started_at, completed_at, cancelled_at,
+	assigned_at, confirmed_at, started_at, completed_at, cancelled_at, reminded_at,
 	created_at, updated_at`
 
 func scanOrder(row interface {
@@ -26,7 +26,7 @@ func scanOrder(row interface {
 	if err := row.Scan(
 		&o.ID, &o.TenantID, &o.ClientID, &o.ServiceID, &o.MasterID, &o.AddressText, &o.ScheduledAt,
 		&o.Status, &o.Price, &o.Notes, &o.CancellationReason,
-		&o.AssignedAt, &o.ConfirmedAt, &o.StartedAt, &o.CompletedAt, &o.CancelledAt,
+		&o.AssignedAt, &o.ConfirmedAt, &o.StartedAt, &o.CompletedAt, &o.CancelledAt, &o.RemindedAt,
 		&o.CreatedAt, &o.UpdatedAt,
 	); err != nil {
 		return nil, wrapNotFound(err)
@@ -192,6 +192,58 @@ func (r *OrderRepo) Complete(ctx context.Context, orderID, masterID uuid.UUID) (
 		WHERE id = $1 AND master_id = $2 AND status = 'in_progress'
 		RETURNING `+orderCols, orderID, masterID)
 	return scanOrder(row)
+}
+
+// ListNeedingReminder returns orders scheduled within the next `lead` window
+// that haven't been reminded yet and are in a state where a reminder makes
+// sense (assigned/confirmed). Used by the reminder scheduler.
+func (r *OrderRepo) ListNeedingReminder(ctx context.Context, lead time.Duration) ([]*model.Order, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+orderCols+` FROM orders
+		WHERE reminded_at IS NULL
+		  AND status IN ('assigned','confirmed')
+		  AND scheduled_at BETWEEN NOW() AND NOW() + (INTERVAL '1 second' * $1)
+		ORDER BY scheduled_at ASC
+		LIMIT 200`, int64(lead.Seconds()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*model.Order
+	for rows.Next() {
+		o, err := scanOrder(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+func (r *OrderRepo) MarkReminded(ctx context.Context, orderID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `UPDATE orders SET reminded_at = NOW() WHERE id = $1`, orderID)
+	return err
+}
+
+// ListForExport returns all orders for a tenant in a date range, newest first.
+func (r *OrderRepo) ListForExport(ctx context.Context, tenantID uuid.UUID, from, to time.Time) ([]*model.Order, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+orderCols+` FROM orders
+		WHERE tenant_id = $1 AND scheduled_at BETWEEN $2 AND $3
+		ORDER BY scheduled_at DESC`, tenantID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*model.Order
+	for rows.Next() {
+		o, err := scanOrder(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
 }
 
 func (r *OrderRepo) Cancel(ctx context.Context, orderID uuid.UUID, reason string) (*model.Order, error) {

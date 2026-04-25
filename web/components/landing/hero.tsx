@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ArrowRight, Sparkles } from "lucide-react";
 import { DashboardMockup } from "./dashboard-mockup";
 
@@ -42,13 +43,13 @@ export function Hero() {
           </p>
 
           <div className="mt-9 flex items-center justify-center gap-3 flex-wrap">
-            <a
-              href="#pricing"
+            <Link
+              href="/signup"
               className="group h-12 inline-flex items-center gap-2 px-6 rounded-xl bg-[var(--color-brand-600)] hover:bg-[var(--color-brand-700)] text-white font-medium shadow-lg shadow-emerald-600/20"
             >
               Начать бесплатно
               <ArrowRight className="size-4 group-hover:translate-x-0.5 transition-transform" />
-            </a>
+            </Link>
             <a
               href="#how"
               className="h-12 inline-flex items-center gap-2 px-6 rounded-xl border bg-white hover:bg-[var(--color-surface-2)] font-medium"

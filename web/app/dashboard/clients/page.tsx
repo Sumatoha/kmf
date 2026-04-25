@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Client } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
@@ -15,7 +15,18 @@ export default function ClientsPage() {
 
   return (
     <>
-      <PageHeader title="Клиенты" description="Те, кто записывался через бота" />
+      <PageHeader
+        title="Клиенты"
+        description="Те, кто записывался через бота"
+        actions={
+          <a
+            href="/api/v1/exports/clients.csv"
+            className="h-10 inline-flex items-center gap-2 px-4 rounded-lg border bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-sm font-medium"
+          >
+            <Download className="size-4" /> CSV
+          </a>
+        }
+      />
       <div className="p-8">
         {isLoading ? (
           <div className="grid place-items-center py-20 text-[var(--color-text-muted)]">

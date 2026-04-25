@@ -2,10 +2,12 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/sumatoha/kmf/backend/internal/model"
+	"github.com/sumatoha/kmf/backend/internal/service"
 )
 
 func listOrdersHandler(d Deps) http.HandlerFunc {
@@ -44,6 +46,75 @@ func getOrderHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, o)
+	}
+}
+
+type createOrderReq struct {
+	ClientID    *string `json:"client_id"`
+	ClientPhone *string `json:"client_phone"`
+	ClientName  *string `json:"client_name"`
+	ServiceID   string  `json:"service_id"`
+	AddressText string  `json:"address_text"`
+	ScheduledAt string  `json:"scheduled_at"`
+	Notes       *string `json:"notes"`
+	MasterID    *string `json:"master_id"`
+}
+
+func createOrderHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req createOrderReq
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		serviceID, err := uuid.Parse(req.ServiceID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid service_id")
+			return
+		}
+		scheduled, err := time.Parse(time.RFC3339, req.ScheduledAt)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "scheduled_at must be RFC3339")
+			return
+		}
+		if req.AddressText == "" {
+			writeError(w, http.StatusBadRequest, "address_text required")
+			return
+		}
+		in := service.CreateManualOrderInput{
+			TenantID:    tenantIDFrom(r.Context()),
+			ServiceID:   serviceID,
+			AddressText: req.AddressText,
+			ScheduledAt: scheduled,
+			Notes:       req.Notes,
+			ClientPhone: req.ClientPhone,
+			ClientName:  req.ClientName,
+		}
+		if req.ClientID != nil && *req.ClientID != "" {
+			id, err := uuid.Parse(*req.ClientID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid client_id")
+				return
+			}
+			in.ClientID = &id
+		}
+		if req.MasterID != nil && *req.MasterID != "" {
+			id, err := uuid.Parse(*req.MasterID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid master_id")
+				return
+			}
+			in.MasterID = &id
+		}
+		o, err := d.Orders.CreateManual(r.Context(), in)
+		if err != nil {
+			if mapServiceError(w, err) {
+				return
+			}
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, o)
 	}
 }
 

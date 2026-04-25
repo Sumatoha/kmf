@@ -10,10 +10,12 @@ import {
   Sparkles,
   LogOut,
   Settings,
+  Webhook,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { getToken, setToken } from "@/lib/api";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const NAV = [
   { href: "/dashboard", label: "Дашборд", icon: LayoutDashboard },
@@ -21,6 +23,7 @@ const NAV = [
   { href: "/dashboard/masters", label: "Мастера", icon: UserCog },
   { href: "/dashboard/clients", label: "Клиенты", icon: Users },
   { href: "/dashboard/services", label: "Услуги", icon: Settings },
+  { href: "/dashboard/webhooks", label: "Webhooks", icon: Webhook },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -78,14 +81,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             );
           })}
         </nav>
-        <div className="p-3 border-t">
+        <div className="p-3 border-t flex items-center gap-2">
           <button
             onClick={logout}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
+            className="flex-1 flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
           >
             <LogOut className="size-4" />
             Выйти
           </button>
+          <ThemeToggle />
         </div>
       </aside>
       <main className="flex-1 min-w-0">{children}</main>

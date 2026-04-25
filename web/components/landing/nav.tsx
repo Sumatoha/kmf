@@ -78,12 +78,12 @@ export function Nav() {
                 >
                   Войти
                 </Link>
-                <a
-                  href="#pricing"
+                <Link
+                  href="/signup"
                   className="h-9 inline-flex items-center px-4 rounded-lg bg-[var(--color-brand-600)] hover:bg-[var(--color-brand-700)] text-white text-sm font-medium shadow-sm"
                 >
                   Начать бесплатно
-                </a>
+                </Link>
               </>
             )}
           </div>
@@ -118,9 +118,9 @@ export function Nav() {
               ) : (
                 <>
                   <Link href="/login" className="py-2 text-sm">Войти</Link>
-                  <a href="#pricing" className="py-2 text-sm font-medium text-[var(--color-brand-700)]">
+                  <Link href="/signup" className="py-2 text-sm font-medium text-[var(--color-brand-700)]">
                     Начать бесплатно →
-                  </a>
+                  </Link>
                 </>
               )}
             </div>

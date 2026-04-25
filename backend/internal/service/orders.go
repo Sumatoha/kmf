@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/sumatoha/kmf/backend/internal/model"
 	"github.com/sumatoha/kmf/backend/internal/storage"
 )
@@ -25,6 +26,7 @@ type OrderService struct {
 	services *storage.ServiceRepo
 	reviews  *storage.ReviewRepo
 	notifier Notifier
+	hooks    *WebhookService
 	log      *slog.Logger
 }
 
@@ -35,6 +37,7 @@ func NewOrderService(
 	services *storage.ServiceRepo,
 	reviews *storage.ReviewRepo,
 	notifier Notifier,
+	hooks *WebhookService,
 	log *slog.Logger,
 ) *OrderService {
 	if notifier == nil {
@@ -42,11 +45,18 @@ func NewOrderService(
 	}
 	return &OrderService{
 		orders: orders, clients: clients, masters: masters, services: services,
-		reviews: reviews, notifier: notifier, log: log,
+		reviews: reviews, notifier: notifier, hooks: hooks, log: log,
 	}
 }
 
 func (s *OrderService) SetNotifier(n Notifier) { s.notifier = n }
+
+func (s *OrderService) emit(tenantID uuid.UUID, event string, payload any) {
+	if s.hooks == nil {
+		return
+	}
+	go s.hooks.Enqueue(context.Background(), tenantID, event, payload)
+}
 
 type CreateOrderInput struct {
 	TenantID    uuid.UUID
@@ -84,6 +94,59 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (*model.
 	}
 
 	go s.broadcastToMasters(context.Background(), order, svc)
+	s.emit(order.TenantID, EventOrderCreated, order)
+	return order, nil
+}
+
+// CreateManual is invoked by an admin to create an order on behalf of a client
+// who phoned in. clientID may be nil — in that case phone/fullName are used to
+// upsert a non-Telegram client. masterID may be nil (broadcast as usual) or set
+// (assigned directly).
+type CreateManualOrderInput struct {
+	TenantID    uuid.UUID
+	ClientID    *uuid.UUID
+	ClientPhone *string
+	ClientName  *string
+	ServiceID   uuid.UUID
+	AddressText string
+	ScheduledAt time.Time
+	Notes       *string
+	MasterID    *uuid.UUID
+}
+
+func (s *OrderService) CreateManual(ctx context.Context, in CreateManualOrderInput) (*model.Order, error) {
+	clientID := uuid.Nil
+	if in.ClientID != nil {
+		clientID = *in.ClientID
+	} else if in.ClientPhone != nil && *in.ClientPhone != "" {
+		c, err := s.clients.UpsertByPhone(ctx, in.TenantID, *in.ClientPhone, in.ClientName)
+		if err != nil {
+			return nil, fmt.Errorf("upsert client: %w", err)
+		}
+		clientID = c.ID
+	} else {
+		return nil, fmt.Errorf("client_id or client_phone is required")
+	}
+
+	order, err := s.Create(ctx, CreateOrderInput{
+		TenantID:    in.TenantID,
+		ClientID:    clientID,
+		ServiceID:   in.ServiceID,
+		AddressText: in.AddressText,
+		ScheduledAt: in.ScheduledAt,
+		Notes:       in.Notes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if in.MasterID != nil {
+		assigned, err := s.AssignByAdmin(ctx, order.ID, *in.MasterID)
+		if err != nil {
+			s.log.Warn("manual create: assign", "err", err)
+			return order, nil
+		}
+		return assigned, nil
+	}
 	return order, nil
 }
 
@@ -165,6 +228,7 @@ func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uui
 			return assigned, fmt.Errorf("confirm: %w", err)
 		}
 		s.notifyClient(ctx, confirmed, masterID)
+		s.emit(confirmed.TenantID, EventOrderConfirmed, confirmed)
 		return confirmed, nil
 
 	case model.OrderStatusAssigned:
@@ -176,6 +240,7 @@ func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uui
 			return nil, fmt.Errorf("confirm: %w", err)
 		}
 		s.notifyClient(ctx, confirmed, masterID)
+		s.emit(confirmed.TenantID, EventOrderConfirmed, confirmed)
 		return confirmed, nil
 
 	default:
@@ -210,6 +275,7 @@ func (s *OrderService) Start(ctx context.Context, orderID, masterID uuid.UUID) (
 	if client, err := s.clients.GetByID(ctx, order.ClientID); err == nil {
 		_ = s.notifier.NotifyOrderStartedToClient(ctx, client, order)
 	}
+	s.emit(order.TenantID, EventOrderStarted, order)
 	return order, nil
 }
 
@@ -227,6 +293,7 @@ func (s *OrderService) Complete(ctx context.Context, orderID, masterID uuid.UUID
 	if client, err := s.clients.GetByID(ctx, order.ClientID); err == nil {
 		_ = s.notifier.NotifyOrderCompletedToClient(ctx, client, order)
 	}
+	s.emit(order.TenantID, EventOrderCompleted, order)
 	return order, nil
 }
 
@@ -243,6 +310,7 @@ func (s *OrderService) Cancel(ctx context.Context, orderID uuid.UUID, reason str
 			_ = s.notifier.NotifyOrderCancelledToMaster(ctx, m, order)
 		}
 	}
+	s.emit(order.TenantID, EventOrderCancelled, order)
 	return order, nil
 }
 
@@ -274,5 +342,6 @@ func (s *OrderService) SubmitReview(ctx context.Context, in SubmitReviewInput) (
 	if order.MasterID != nil {
 		_ = s.masters.IncrementCompletedAndUpdateRating(ctx, *order.MasterID)
 	}
+	s.emit(review.TenantID, EventReviewCreated, review)
 	return review, nil
 }

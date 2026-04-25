@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ArrowRight, Sparkles } from "lucide-react";
 
 export function FinalCTA() {
@@ -33,13 +34,13 @@ export function FinalCTA() {
               Регистрация занимает 3 минуты. До первого заказа в боте — час. Без карты, без обязательств.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <a
-                href="#"
+              <Link
+                href="/signup"
                 className="group h-12 inline-flex items-center gap-2 px-6 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 font-semibold shadow-lg"
               >
                 Начать бесплатно
                 <ArrowRight className="size-4 group-hover:translate-x-0.5 transition-transform" />
-              </a>
+              </Link>
               <a
                 href="mailto:hello@cleanops.app"
                 className="h-12 inline-flex items-center gap-2 px-6 rounded-xl border border-white/20 hover:bg-white/5 font-medium"

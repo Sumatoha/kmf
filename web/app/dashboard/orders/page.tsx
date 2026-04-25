@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, X } from "lucide-react";
+import { Download, Loader2, MapPin, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { Order, OrderStatus } from "@/lib/types";
@@ -10,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AssignPopover } from "@/components/assign-popover";
+import { NewOrderDialog } from "@/components/new-order-dialog";
 
 const COLUMNS: { status: OrderStatus; title: string }[] = [
   { status: "new", title: "Новые" },
@@ -22,6 +24,7 @@ const COLUMNS: { status: OrderStatus; title: string }[] = [
 
 export default function OrdersPage() {
   const qc = useQueryClient();
+  const [createOpen, setCreateOpen] = useState(false);
   const { data, isLoading } = useQuery<{ items: Order[] }>({
     queryKey: ["orders"],
     queryFn: () => api<{ items: Order[] }>("/orders"),
@@ -42,7 +45,23 @@ export default function OrdersPage() {
 
   return (
     <>
-      <PageHeader title="Заказы" description="Канбан по статусам" />
+      <PageHeader
+        title="Заказы"
+        description="Канбан по статусам"
+        actions={
+          <>
+            <a
+              href="/api/v1/exports/orders.csv"
+              className="h-10 inline-flex items-center gap-2 px-4 rounded-lg border bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-sm font-medium"
+            >
+              <Download className="size-4" /> CSV
+            </a>
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" /> Новый заказ
+            </Button>
+          </>
+        }
+      />
       <div className="p-8 overflow-x-auto">
         {isLoading || !data ? (
           <div className="grid place-items-center py-20 text-[var(--color-text-muted)]">
@@ -72,9 +91,15 @@ export default function OrdersPage() {
                           </div>
                           <StatusBadge status={o.status} />
                         </div>
-                        <div className="mt-2 text-sm font-medium leading-tight line-clamp-2">
-                          {o.address_text}
-                        </div>
+                        <a
+                          href={`https://yandex.ru/maps/?text=${encodeURIComponent(o.address_text)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 flex items-start gap-1 text-sm font-medium leading-tight line-clamp-2 hover:text-[var(--color-brand-700)] group"
+                        >
+                          <MapPin className="size-3.5 shrink-0 mt-0.5 opacity-50 group-hover:opacity-100" />
+                          <span>{o.address_text}</span>
+                        </a>
                         <div className="mt-2 text-xs text-[var(--color-text-muted)]">
                           {new Date(o.scheduled_at).toLocaleString("ru-RU", {
                             day: "2-digit",
@@ -113,6 +138,7 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
+      <NewOrderDialog open={createOpen} onClose={() => setCreateOpen(false)} />
     </>
   );
 }

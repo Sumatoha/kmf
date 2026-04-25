@@ -74,3 +74,14 @@ export interface DashboardStats {
   active_masters: number;
   total_clients: number;
 }
+
+export interface Webhook {
+  id: string;
+  tenant_id: string;
+  url: string;
+  secret: string;
+  events: string[];
+  description?: string | null;
+  is_active: boolean;
+  created_at: string;
+}

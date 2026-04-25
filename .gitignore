@@ -19,6 +19,8 @@ web/build/
 web/dist/
 web/.turbo/
 web/tsconfig.tsbuildinfo
+web/playwright-report/
+web/test-results/
 
 # Editors
 .vscode/

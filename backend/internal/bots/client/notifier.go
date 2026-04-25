@@ -70,3 +70,12 @@ func (n *ClientNotifier) NotifyOrderCompletedToClient(ctx context.Context, c *mo
 func (n *ClientNotifier) NotifyOrderCancelledToMaster(_ context.Context, _ *model.Master, _ *model.Order) error {
 	return nil
 }
+
+func (n *ClientNotifier) NotifyClientText(ctx context.Context, c *model.Client, text string) {
+	if c.TelegramID == nil {
+		return
+	}
+	shared.Send(ctx, n.bot.Logger(), n.bot.Sender(), &bot.SendMessageParams{ChatID: *c.TelegramID, Text: text})
+}
+
+func (n *ClientNotifier) NotifyMasterText(_ context.Context, _ *model.Master, _ string) {}

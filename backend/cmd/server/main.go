@@ -55,12 +55,15 @@ func run() error {
 	orderRepo := storage.NewOrderRepo(pool)
 	reviewRepo := storage.NewReviewRepo(pool)
 	sessionRepo := storage.NewSessionRepo(pool)
+	webhookRepo := storage.NewWebhookRepo(pool)
 
-	authSvc := service.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTTTL)
+	authSvc := service.NewAuthService(userRepo, tenantRepo, serviceRepo, cfg.JWTSecret, cfg.JWTTTL)
 	masterSvc := service.NewMasterService(masterRepo)
+	webhookSvc := service.NewWebhookService(webhookRepo, log.With("svc", "webhook"))
 
 	combined := &shared.CombinedNotifier{}
-	orderSvc := service.NewOrderService(orderRepo, clientRepo, masterRepo, serviceRepo, reviewRepo, combined, log)
+	orderSvc := service.NewOrderService(orderRepo, clientRepo, masterRepo, serviceRepo, reviewRepo, combined, webhookSvc, log)
+	reminderSvc := service.NewRemindersService(orderRepo, clientRepo, masterRepo, combined, webhookSvc, log.With("svc", "reminders"))
 
 	clientBotEnabled, masterBotEnabled := cfg.BotsEnabled()
 	var (
@@ -109,6 +112,7 @@ func run() error {
 		Auth:        authSvc,
 		Orders:      orderSvc,
 		Masters:     masterSvc,
+		Webhooks:    webhookSvc,
 		Tenants:     tenantRepo,
 		Clients:     clientRepo,
 		Services:    serviceRepo,
@@ -154,11 +158,23 @@ func run() error {
 		}()
 	}
 
-	// Background: prune stale bot sessions every hour.
+	// Background workers.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		runSessionGC(rootCtx, sessionRepo, cfg.SessionRetention, log.With("task", "session_gc"))
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Info("reminders started")
+		reminderSvc.Run(rootCtx)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Info("webhook dispatcher started")
+		webhookSvc.RunDispatcher(rootCtx, nil)
 	}()
 
 	<-rootCtx.Done()
