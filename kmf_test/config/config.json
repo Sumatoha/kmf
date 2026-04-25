@@ -1,4 +1,0 @@
-{
-  "port": "8080",
-  "connectionString": "server=localhost;user id=kursUser;password=kursPswd;database=TEST"
-}
