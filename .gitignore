@@ -1,0 +1,33 @@
+# Env
+.env
+.env.local
+.env.*.local
+
+# Go
+backend/bin/
+backend/tmp/
+*.exe
+*.test
+*.out
+vendor/
+
+# Node / Next.js
+node_modules/
+web/.next/
+web/out/
+web/build/
+web/dist/
+web/.turbo/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Postgres data
+.docker/postgres/

@@ -1,0 +1,215 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/sumatoha/kmf/backend/internal/model"
+	"github.com/sumatoha/kmf/backend/internal/storage"
+)
+
+var (
+	ErrServiceNotFound = errors.New("service not found")
+	ErrOrderNotFound   = errors.New("order not found")
+	ErrInvalidState    = errors.New("invalid order state for this action")
+)
+
+type OrderService struct {
+	orders   *storage.OrderRepo
+	clients  *storage.ClientRepo
+	masters  *storage.MasterRepo
+	services *storage.ServiceRepo
+	reviews  *storage.ReviewRepo
+	notifier Notifier
+	log      *slog.Logger
+}
+
+func NewOrderService(
+	orders *storage.OrderRepo,
+	clients *storage.ClientRepo,
+	masters *storage.MasterRepo,
+	services *storage.ServiceRepo,
+	reviews *storage.ReviewRepo,
+	notifier Notifier,
+	log *slog.Logger,
+) *OrderService {
+	if notifier == nil {
+		notifier = NoopNotifier{}
+	}
+	return &OrderService{
+		orders: orders, clients: clients, masters: masters, services: services,
+		reviews: reviews, notifier: notifier, log: log,
+	}
+}
+
+func (s *OrderService) SetNotifier(n Notifier) { s.notifier = n }
+
+type CreateOrderInput struct {
+	TenantID    uuid.UUID
+	ClientID    uuid.UUID
+	ServiceID   uuid.UUID
+	AddressText string
+	ScheduledAt time.Time
+	Notes       *string
+}
+
+// Create books a new order and broadcasts it to available masters.
+func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (*model.Order, error) {
+	svc, err := s.services.GetByID(ctx, in.ServiceID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrServiceNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get service: %w", err)
+	}
+	if svc.TenantID != in.TenantID {
+		return nil, ErrServiceNotFound
+	}
+
+	order, err := s.orders.Create(ctx, storage.CreateOrderParams{
+		TenantID:    in.TenantID,
+		ClientID:    in.ClientID,
+		ServiceID:   in.ServiceID,
+		AddressText: in.AddressText,
+		ScheduledAt: in.ScheduledAt,
+		Price:       svc.BasePrice,
+		Notes:       in.Notes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create order: %w", err)
+	}
+
+	go s.broadcastToMasters(context.Background(), order, svc)
+	return order, nil
+}
+
+// broadcastToMasters notifies every available master in the tenant about a new
+// unassigned order. The first master who accepts wins (atomically via Assign).
+func (s *OrderService) broadcastToMasters(ctx context.Context, order *model.Order, svc *model.Service) {
+	masters, err := s.masters.ListAvailable(ctx, order.TenantID)
+	if err != nil {
+		s.log.Error("list available masters", "err", err)
+		return
+	}
+	for _, m := range masters {
+		if err := s.notifier.NotifyNewOrder(ctx, m, order, svc); err != nil {
+			s.log.Warn("notify master", "master_id", m.ID, "err", err)
+		}
+	}
+}
+
+// AcceptByMaster atomically assigns and confirms an order. Returns ErrInvalidState
+// if another master already grabbed it.
+func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+	assigned, err := s.orders.Assign(ctx, orderID, masterID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrInvalidState
+	}
+	if err != nil {
+		return nil, fmt.Errorf("assign: %w", err)
+	}
+	confirmed, err := s.orders.Confirm(ctx, assigned.ID, masterID)
+	if err != nil {
+		return assigned, fmt.Errorf("confirm: %w", err)
+	}
+	s.notifyClient(ctx, confirmed, masterID)
+	return confirmed, nil
+}
+
+func (s *OrderService) notifyClient(ctx context.Context, order *model.Order, masterID uuid.UUID) {
+	client, err := s.clients.GetByID(ctx, order.ClientID)
+	if err != nil {
+		s.log.Warn("notify client: load client", "err", err)
+		return
+	}
+	master, err := s.masters.GetByID(ctx, masterID)
+	if err != nil {
+		s.log.Warn("notify client: load master", "err", err)
+		return
+	}
+	if err := s.notifier.NotifyOrderConfirmedToClient(ctx, client, order, master); err != nil {
+		s.log.Warn("notify client confirmed", "err", err)
+	}
+}
+
+func (s *OrderService) Start(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+	order, err := s.orders.Start(ctx, orderID, masterID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrInvalidState
+	}
+	if err != nil {
+		return nil, err
+	}
+	if client, err := s.clients.GetByID(ctx, order.ClientID); err == nil {
+		_ = s.notifier.NotifyOrderStartedToClient(ctx, client, order)
+	}
+	return order, nil
+}
+
+func (s *OrderService) Complete(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+	order, err := s.orders.Complete(ctx, orderID, masterID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrInvalidState
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.masters.IncrementCompletedAndUpdateRating(ctx, masterID); err != nil {
+		s.log.Warn("update master stats", "err", err)
+	}
+	if client, err := s.clients.GetByID(ctx, order.ClientID); err == nil {
+		_ = s.notifier.NotifyOrderCompletedToClient(ctx, client, order)
+	}
+	return order, nil
+}
+
+func (s *OrderService) Cancel(ctx context.Context, orderID uuid.UUID, reason string) (*model.Order, error) {
+	order, err := s.orders.Cancel(ctx, orderID, reason)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrInvalidState
+	}
+	if err != nil {
+		return nil, err
+	}
+	if order.MasterID != nil {
+		if m, err := s.masters.GetByID(ctx, *order.MasterID); err == nil {
+			_ = s.notifier.NotifyOrderCancelledToMaster(ctx, m, order)
+		}
+	}
+	return order, nil
+}
+
+type SubmitReviewInput struct {
+	OrderID  uuid.UUID
+	ClientID uuid.UUID
+	Rating   int
+	Comment  *string
+}
+
+func (s *OrderService) SubmitReview(ctx context.Context, in SubmitReviewInput) (*model.Review, error) {
+	order, err := s.orders.GetByID(ctx, in.OrderID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if order.ClientID != in.ClientID {
+		return nil, ErrOrderNotFound
+	}
+	if order.Status != model.OrderStatusDone {
+		return nil, ErrInvalidState
+	}
+	review, err := s.reviews.Create(ctx, order.TenantID, order.ID, order.ClientID, order.MasterID, in.Rating, in.Comment)
+	if err != nil {
+		return nil, err
+	}
+	if order.MasterID != nil {
+		_ = s.masters.IncrementCompletedAndUpdateRating(ctx, *order.MasterID)
+	}
+	return review, nil
+}
