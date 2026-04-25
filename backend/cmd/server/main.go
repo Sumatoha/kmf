@@ -22,24 +22,30 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("fatal", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		// no logger yet, write directly
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("config", "err", err)
-		os.Exit(1)
+		return err
 	}
 	log := logger.New(cfg.LogLevel)
 	slog.SetDefault(log)
+	log.Info("starting cleanops", "env", cfg.AppEnv, "addr", cfg.HTTPAddr)
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	pool, err := storage.NewPool(rootCtx, cfg.DatabaseURL)
 	if err != nil {
-		log.Error("connect db", "err", err)
-		os.Exit(1)
+		return err
 	}
 	defer pool.Close()
+	log.Info("database connected")
 
 	tenantRepo := storage.NewTenantRepo(pool)
 	userRepo := storage.NewUserRepo(pool)
@@ -50,51 +56,67 @@ func main() {
 	reviewRepo := storage.NewReviewRepo(pool)
 	sessionRepo := storage.NewSessionRepo(pool)
 
-	authSvc := service.NewAuthService(userRepo, cfg.JWTSecret, 7*24*time.Hour)
+	authSvc := service.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTTTL)
 	masterSvc := service.NewMasterService(masterRepo)
 
-	// notifier wired below once bots exist; start with noop
 	combined := &shared.CombinedNotifier{}
 	orderSvc := service.NewOrderService(orderRepo, clientRepo, masterRepo, serviceRepo, reviewRepo, combined, log)
 
-	// Bots
 	clientBotEnabled, masterBotEnabled := cfg.BotsEnabled()
 	var (
 		clientBot *client.Bot
 		masterBot *master.Bot
 	)
 	if clientBotEnabled {
-		clientBot, err = client.New(cfg.ClientBot.Token, sessionRepo, tenantRepo, clientRepo, serviceRepo, orderSvc, log.With("bot", "client"))
+		clientBot, err = client.New(client.Deps{
+			Token:    cfg.ClientBot.Token,
+			Sessions: sessionRepo,
+			Tenants:  tenantRepo,
+			Clients:  clientRepo,
+			Services: serviceRepo,
+			OrdersR:  orderRepo,
+			Orders:   orderSvc,
+			Log:      log.With("bot", "client"),
+		})
 		if err != nil {
-			log.Error("init client bot", "err", err)
-			os.Exit(1)
+			return err
 		}
-		clientBot.SetOrdersRepo(orderRepo)
 		combined.Client = client.NewNotifier(clientBot)
 	} else {
 		log.Warn("client bot disabled (no TELEGRAM_CLIENT_BOT_TOKEN)")
 	}
 	if masterBotEnabled {
-		masterBot, err = master.New(cfg.MasterBot.Token, sessionRepo, tenantRepo, masterSvc, masterRepo, orderSvc, orderRepo, serviceRepo, log.With("bot", "master"))
+		masterBot, err = master.New(master.Deps{
+			Token:    cfg.MasterBot.Token,
+			Sessions: sessionRepo,
+			Tenants:  tenantRepo,
+			Masters:  masterSvc,
+			MastersR: masterRepo,
+			Orders:   orderSvc,
+			OrdersR:  orderRepo,
+			Services: serviceRepo,
+			Log:      log.With("bot", "master"),
+		})
 		if err != nil {
-			log.Error("init master bot", "err", err)
-			os.Exit(1)
+			return err
 		}
 		combined.Master = master.NewNotifier(masterBot)
 	} else {
 		log.Warn("master bot disabled (no TELEGRAM_MASTER_BOT_TOKEN)")
 	}
 
-	// HTTP server
 	router := api.NewRouter(api.Deps{
-		Auth:     authSvc,
-		Orders:   orderSvc,
-		Masters:  masterSvc,
-		Tenants:  tenantRepo,
-		Clients:  clientRepo,
-		Services: serviceRepo,
-		OrdersR:  orderRepo,
-		Log:      log,
+		Auth:        authSvc,
+		Orders:      orderSvc,
+		Masters:     masterSvc,
+		Tenants:     tenantRepo,
+		Clients:     clientRepo,
+		Services:    serviceRepo,
+		OrdersR:     orderRepo,
+		MastersR:    masterRepo,
+		Pool:        pool,
+		Log:         log,
+		CORSOrigins: cfg.CORSOrigins,
 	})
 
 	srv := &http.Server{
@@ -105,23 +127,21 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	// HTTP
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Info("http server listening", "addr", cfg.HTTPAddr)
+		log.Info("http listening", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("http server", "err", err)
 			cancel()
 		}
 	}()
 
-	// Bots
 	if clientBot != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			log.Info("client bot started")
+			log.Info("client bot started", "username", cfg.ClientBot.Username)
 			clientBot.Start(rootCtx)
 		}()
 	}
@@ -129,10 +149,17 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			log.Info("master bot started")
+			log.Info("master bot started", "username", cfg.MasterBot.Username)
 			masterBot.Start(rootCtx)
 		}()
 	}
+
+	// Background: prune stale bot sessions every hour.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runSessionGC(rootCtx, sessionRepo, cfg.SessionRetention, log.With("task", "session_gc"))
+	}()
 
 	<-rootCtx.Done()
 	log.Info("shutting down")
@@ -142,4 +169,25 @@ func main() {
 	_ = srv.Shutdown(shutdownCtx)
 	wg.Wait()
 	log.Info("bye")
+	return nil
+}
+
+func runSessionGC(ctx context.Context, sessions *storage.SessionRepo, retention time.Duration, log *slog.Logger) {
+	tick := time.NewTicker(time.Hour)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			n, err := sessions.DeleteStale(ctx, retention)
+			if err != nil {
+				log.Warn("delete stale", "err", err)
+				continue
+			}
+			if n > 0 {
+				log.Info("pruned stale sessions", "count", n)
+			}
+		}
+	}
 }

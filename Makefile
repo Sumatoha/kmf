@@ -1,4 +1,4 @@
-.PHONY: help up down logs psql migrate-up migrate-down migrate-create run tidy build admin web-install web-dev web-build
+.PHONY: help up down logs psql migrate-up migrate-down migrate-create run tidy build admin tenant docker-build web-install web-dev web-build
 
 DB_URL ?= postgres://cleanops:cleanops_dev@localhost:5432/cleanops?sslmode=disable
 MIGRATIONS_DIR = backend/migrations
@@ -48,6 +48,12 @@ build:
 
 admin:
 	cd backend && go run ./cmd/admin -email=$(email) -password=$(password) -name="$(name)" -tenant-slug=$(or $(slug),demo)
+
+tenant:
+	cd backend && go run ./cmd/tenant -slug=$(slug) -name="$(name)"
+
+docker-build:
+	docker build -t cleanops/backend ./backend
 
 web-install:
 	cd web && npm install

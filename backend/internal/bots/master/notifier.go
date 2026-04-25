@@ -6,10 +6,10 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/sumatoha/kmf/backend/internal/bots/shared"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-// MasterNotifier sends order events to masters.
 type MasterNotifier struct{ bot *Bot }
 
 func NewNotifier(b *Bot) *MasterNotifier { return &MasterNotifier{bot: b} }
@@ -26,11 +26,11 @@ func (n *MasterNotifier) NotifyNewOrder(ctx context.Context, m *model.Master, o 
 		{Text: "✅ Взять", CallbackData: fmt.Sprintf("ord:accept:%s", o.ID)},
 		{Text: "⏭️ Пропустить", CallbackData: fmt.Sprintf("ord:decline:%s", o.ID)},
 	}}
-	_, err := n.bot.SendMessage(ctx, &bot.SendMessageParams{
+	shared.Send(ctx, n.bot.Logger(), n.bot.Sender(), &bot.SendMessageParams{
 		ChatID: *m.TelegramID, Text: text, ParseMode: models.ParseModeMarkdown,
 		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: rows},
 	})
-	return err
+	return nil
 }
 
 func (n *MasterNotifier) NotifyOrderConfirmedToClient(_ context.Context, _ *model.Client, _ *model.Order, _ *model.Master) error {
@@ -47,9 +47,9 @@ func (n *MasterNotifier) NotifyOrderCancelledToMaster(ctx context.Context, m *mo
 	if m.TelegramID == nil {
 		return nil
 	}
-	_, err := n.bot.SendMessage(ctx, &bot.SendMessageParams{
+	shared.Send(ctx, n.bot.Logger(), n.bot.Sender(), &bot.SendMessageParams{
 		ChatID: *m.TelegramID,
-		Text:   fmt.Sprintf("⚠️ Заказ #%s был отменён.", short(o.ID.String())),
+		Text:   fmt.Sprintf("⚠️ Заказ #%s был отменён.", Short(o.ID.String())),
 	})
-	return err
+	return nil
 }

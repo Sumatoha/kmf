@@ -141,6 +141,18 @@ func (r *OrderRepo) Assign(ctx context.Context, orderID, masterID uuid.UUID) (*m
 	return scanOrder(row)
 }
 
+// AssignByAdmin allows reassigning a master at any non-terminal stage. Used by
+// the CRM when a dispatcher manually picks the executor.
+func (r *OrderRepo) AssignByAdmin(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE orders
+		SET master_id = $2, status = 'assigned', assigned_at = NOW(),
+		    confirmed_at = NULL, started_at = NULL
+		WHERE id = $1 AND status NOT IN ('done','cancelled')
+		RETURNING `+orderCols, orderID, masterID)
+	return scanOrder(row)
+}
+
 func (r *OrderRepo) Confirm(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
@@ -159,11 +171,16 @@ func (r *OrderRepo) Decline(ctx context.Context, orderID, masterID uuid.UUID) (*
 	return scanOrder(row)
 }
 
+// Start moves an order to in_progress. Accepts both 'assigned' (admin
+// pre-assigned) and 'confirmed' (master accepted via broadcast) as starting
+// points so admin-assigned orders don't require an extra Accept tap.
 func (r *OrderRepo) Start(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
-		SET status = 'in_progress', started_at = NOW()
-		WHERE id = $1 AND master_id = $2 AND status = 'confirmed'
+		SET status = 'in_progress',
+		    started_at = NOW(),
+		    confirmed_at = COALESCE(confirmed_at, NOW())
+		WHERE id = $1 AND master_id = $2 AND status IN ('assigned','confirmed')
 		RETURNING `+orderCols, orderID, masterID)
 	return scanOrder(row)
 }

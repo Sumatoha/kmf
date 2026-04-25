@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/sumatoha/kmf/backend/internal/bots/shared"
 	"github.com/sumatoha/kmf/backend/internal/service"
-	"github.com/sumatoha/kmf/backend/internal/storage"
 )
 
 const (
@@ -36,11 +35,10 @@ func (c *Bot) startHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	from := u.Message.From
 
 	args := strings.TrimSpace(strings.TrimPrefix(u.Message.Text, "/start"))
-	args = strings.TrimSpace(args)
 
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil {
-		c.log.Error("load session", "err", err)
+		c.log.Error("load session", "chat_id", chatID, "err", err)
 		return
 	}
 
@@ -48,19 +46,18 @@ func (c *Bot) startHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 		slug := strings.TrimPrefix(args, tenantPrefix)
 		tenant, err := c.tenants.GetBySlug(ctx, slug)
 		if err != nil {
-			_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: chatID,
-				Text:   "Компания не найдена. Уточните ссылку у компании.",
+			c.log.Info("tenant lookup failed", "slug", slug, "err", err)
+			shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+				ChatID: chatID, Text: "Компания не найдена. Уточните ссылку у компании.",
 			})
 			return
 		}
 		snap.TenantID = &tenant.ID
 		snap.State = stateIdle
 		if err := c.sessions.Save(ctx, chatID, snap); err != nil {
-			c.log.Error("save session", "err", err)
+			c.log.Error("save session", "chat_id", chatID, "err", err)
 		}
-		// Make sure client record exists.
-		fullName := strings.TrimSpace(strings.TrimSpace(from.FirstName + " " + from.LastName))
+		fullName := strings.TrimSpace(from.FirstName + " " + from.LastName)
 		var fnPtr *string
 		if fullName != "" {
 			fnPtr = &fullName
@@ -71,9 +68,9 @@ func (c *Bot) startHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 			unPtr = &u
 		}
 		if _, err := c.clients.UpsertByTelegram(ctx, tenant.ID, from.ID, unPtr, fnPtr); err != nil {
-			c.log.Error("upsert client", "err", err)
+			c.log.Error("upsert client", "tenant_id", tenant.ID, "tg_id", from.ID, "err", err)
 		}
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{
 			ChatID: chatID,
 			Text:   fmt.Sprintf("Добро пожаловать в %s! Нажмите /book чтобы оформить уборку.", tenant.Name),
 		})
@@ -81,13 +78,13 @@ func (c *Bot) startHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 
 	if snap.TenantID == nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{
 			ChatID: chatID,
 			Text:   "Откройте бота по ссылке от вашей клининговой компании, например t.me/CleanOpsBookingBot?start=tenant_demo",
 		})
 		return
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
 		ChatID: chatID,
 		Text:   "С возвращением! /book — новая запись, /orders — мои заказы.",
 	})
@@ -97,9 +94,8 @@ func (c *Bot) bookHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil || snap.TenantID == nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: chatID,
-			Text:   "Сначала откройте бота по ссылке от компании.",
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+			ChatID: chatID, Text: "Сначала откройте бота по ссылке от компании.",
 		})
 		return
 	}
@@ -109,13 +105,13 @@ func (c *Bot) bookHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 func (c *Bot) askService(ctx context.Context, b *bot.Bot, chatID int64, snap *shared.Snapshot) {
 	items, err := c.services.ListActive(ctx, *snap.TenantID)
 	if err != nil {
-		c.log.Error("list services", "err", err)
+		c.log.Error("list services", "tenant_id", *snap.TenantID, "err", err)
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось загрузить услуги, попробуйте позже."})
 		return
 	}
 	if len(items) == 0 {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: chatID,
-			Text:   "У компании пока нет доступных услуг. Попробуйте позже.",
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+			ChatID: chatID, Text: "У компании пока нет доступных услуг. Попробуйте позже.",
 		})
 		return
 	}
@@ -126,11 +122,10 @@ func (c *Bot) askService(ctx context.Context, b *bot.Bot, chatID int64, snap *sh
 	}
 	snap.State = stateChoosingService
 	if err := c.sessions.Save(ctx, chatID, snap); err != nil {
-		c.log.Error("save session", "err", err)
+		c.log.Error("save session", "chat_id", chatID, "err", err)
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        "Выберите услугу:",
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+		ChatID: chatID, Text: "Выберите услугу:",
 		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: rows},
 	})
 }
@@ -141,17 +136,18 @@ func (c *Bot) callbackService(ctx context.Context, b *bot.Bot, u *models.Update)
 		return
 	}
 	chatID := cq.Message.Message.Chat.ID
-	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID})
+	shared.AnswerCB(ctx, c.log, b, cq.ID)
 
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil {
+		c.log.Error("load session", "chat_id", chatID, "err", err)
 		return
 	}
 	id := strings.TrimPrefix(cq.Data, "svc:")
 	snap.Data["service_id"] = id
 	snap.State = stateChoosingDate
 	if err := c.sessions.Save(ctx, chatID, snap); err != nil {
-		c.log.Error("save session", "err", err)
+		c.log.Error("save session", "chat_id", chatID, "err", err)
 	}
 	c.askDate(ctx, b, chatID)
 }
@@ -166,9 +162,8 @@ func (c *Bot) askDate(ctx context.Context, b *bot.Bot, chatID int64) {
 			Text: label, CallbackData: "date:" + d.Format("2006-01-02"),
 		}})
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        "Выберите дату:",
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+		ChatID: chatID, Text: "Выберите дату:",
 		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: rows},
 	})
 }
@@ -179,16 +174,17 @@ func (c *Bot) callbackDate(ctx context.Context, b *bot.Bot, u *models.Update) {
 		return
 	}
 	chatID := cq.Message.Message.Chat.ID
-	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID})
+	shared.AnswerCB(ctx, c.log, b, cq.ID)
 
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil {
+		c.log.Error("load session", "chat_id", chatID, "err", err)
 		return
 	}
 	snap.Data["date"] = strings.TrimPrefix(cq.Data, "date:")
 	snap.State = stateChoosingTime
 	if err := c.sessions.Save(ctx, chatID, snap); err != nil {
-		c.log.Error("save session", "err", err)
+		c.log.Error("save session", "chat_id", chatID, "err", err)
 	}
 	c.askTime(ctx, b, chatID)
 }
@@ -208,9 +204,8 @@ func (c *Bot) askTime(ctx context.Context, b *bot.Bot, chatID int64) {
 	if len(row) > 0 {
 		rows = append(rows, row)
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        "Выберите время:",
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+		ChatID: chatID, Text: "Выберите время:",
 		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: rows},
 	})
 }
@@ -221,20 +216,20 @@ func (c *Bot) callbackTime(ctx context.Context, b *bot.Bot, u *models.Update) {
 		return
 	}
 	chatID := cq.Message.Message.Chat.ID
-	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID})
+	shared.AnswerCB(ctx, c.log, b, cq.ID)
 
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil {
+		c.log.Error("load session", "chat_id", chatID, "err", err)
 		return
 	}
 	snap.Data["hour"] = strings.TrimPrefix(cq.Data, "time:")
 	snap.State = stateAwaitingAddress
 	if err := c.sessions.Save(ctx, chatID, snap); err != nil {
-		c.log.Error("save session", "err", err)
+		c.log.Error("save session", "chat_id", chatID, "err", err)
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   "Укажите адрес уборки одним сообщением (улица, дом, квартира):",
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+		ChatID: chatID, Text: "Укажите адрес уборки одним сообщением (улица, дом, квартира):",
 	})
 }
 
@@ -242,31 +237,34 @@ func (c *Bot) handleAddress(ctx context.Context, b *bot.Bot, u *models.Update, s
 	chatID := u.Message.Chat.ID
 	addr := strings.TrimSpace(u.Message.Text)
 	if len(addr) < 5 {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Адрес слишком короткий, попробуйте ещё раз:"})
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Адрес слишком короткий, попробуйте ещё раз:"})
 		return
 	}
 	snap.Data["address"] = addr
 
-	// If we don't have client phone yet, ask for it; otherwise go straight to confirm.
 	if snap.TenantID == nil {
 		return
 	}
 	cli, err := c.clients.GetByTelegram(ctx, *snap.TenantID, u.Message.From.ID)
 	if err != nil {
-		c.log.Error("get client", "err", err)
+		c.log.Error("get client", "tenant_id", *snap.TenantID, "tg_id", u.Message.From.ID, "err", err)
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Что-то пошло не так. Введите /start tenant_<код> заново."})
 		return
 	}
 	if cli.Phone == nil || *cli.Phone == "" {
 		snap.State = stateAwaitingPhone
-		_ = c.sessions.Save(ctx, chatID, snap)
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: chatID,
-			Text:   "Укажите ваш телефон (например, +7 900 000-00-00):",
+		if err := c.sessions.Save(ctx, chatID, snap); err != nil {
+			c.log.Error("save session", "chat_id", chatID, "err", err)
+		}
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+			ChatID: chatID, Text: "Укажите ваш телефон (например, +7 900 000-00-00):",
 		})
 		return
 	}
 	snap.State = stateConfirming
-	_ = c.sessions.Save(ctx, chatID, snap)
+	if err := c.sessions.Save(ctx, chatID, snap); err != nil {
+		c.log.Error("save session", "chat_id", chatID, "err", err)
+	}
 	c.showConfirmation(ctx, b, chatID, snap)
 }
 
@@ -274,7 +272,7 @@ func (c *Bot) handlePhone(ctx context.Context, b *bot.Bot, u *models.Update, sna
 	chatID := u.Message.Chat.ID
 	phone := strings.TrimSpace(u.Message.Text)
 	if len(phone) < 6 {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Телефон слишком короткий, попробуйте ещё раз:"})
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Телефон слишком короткий, попробуйте ещё раз:"})
 		return
 	}
 	if snap.TenantID == nil {
@@ -286,10 +284,12 @@ func (c *Bot) handlePhone(ctx context.Context, b *bot.Bot, u *models.Update, sna
 		return
 	}
 	if err := c.clients.UpdateContact(ctx, cli.ID, nil, &phone); err != nil {
-		c.log.Error("update contact", "err", err)
+		c.log.Error("update contact", "client_id", cli.ID, "err", err)
 	}
 	snap.State = stateConfirming
-	_ = c.sessions.Save(ctx, chatID, snap)
+	if err := c.sessions.Save(ctx, chatID, snap); err != nil {
+		c.log.Error("save session", "chat_id", chatID, "err", err)
+	}
 	c.showConfirmation(ctx, b, chatID, snap)
 }
 
@@ -301,24 +301,25 @@ func (c *Bot) showConfirmation(ctx context.Context, b *bot.Bot, chatID int64, sn
 
 	svcUUID, err := uuid.Parse(svcID)
 	if err != nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Сессия истекла, введите /book чтобы начать заново."})
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Сессия истекла, введите /book чтобы начать заново."})
 		return
 	}
 	svc, err := c.services.GetByID(ctx, svcUUID)
 	if err != nil {
-		c.log.Error("get service", "err", err)
+		c.log.Error("get service", "service_id", svcUUID, "err", err)
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Услуга недоступна. Введите /book заново."})
 		return
 	}
 	scheduled, err := parseScheduled(dateStr, hourStr)
 	if err != nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Неверная дата/время, попробуйте /book снова."})
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Неверная дата/время, попробуйте /book снова."})
 		return
 	}
 	text := fmt.Sprintf(
 		"Подтвердите заказ:\n\n*Услуга:* %s\n*Стоимость:* %.0f ₽\n*Когда:* %s\n*Адрес:* %s",
 		svc.Name, svc.BasePrice, scheduled.Format("02.01.2006 15:04"), addr,
 	)
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
 		ChatID: chatID, Text: text, ParseMode: models.ParseModeMarkdown,
 		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
@@ -335,15 +336,18 @@ func (c *Bot) callbackConfirm(ctx context.Context, b *bot.Bot, u *models.Update)
 		return
 	}
 	chatID := cq.Message.Message.Chat.ID
-	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID})
+	shared.AnswerCB(ctx, c.log, b, cq.ID)
 
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil {
+		c.log.Error("load session", "chat_id", chatID, "err", err)
 		return
 	}
 	if strings.TrimPrefix(cq.Data, "confirm:") == "no" {
-		_ = c.sessions.Reset(ctx, chatID)
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ отменён."})
+		if err := c.sessions.Reset(ctx, chatID); err != nil {
+			c.log.Warn("reset session", "chat_id", chatID, "err", err)
+		}
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ отменён."})
 		return
 	}
 
@@ -357,7 +361,7 @@ func (c *Bot) callbackConfirm(ctx context.Context, b *bot.Bot, u *models.Update)
 
 	scheduled, err := parseScheduled(dateStr, hourStr)
 	if err != nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Что-то пошло не так. Попробуйте /book снова."})
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Что-то пошло не так. Попробуйте /book снова."})
 		return
 	}
 	svcUUID, err := uuid.Parse(svcID)
@@ -378,20 +382,66 @@ func (c *Bot) callbackConfirm(ctx context.Context, b *bot.Bot, u *models.Update)
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrServiceNotFound) {
-			_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Услуга больше недоступна. Введите /book снова."})
+			shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Услуга больше недоступна. Введите /book снова."})
 			return
 		}
 		c.log.Error("create order", "err", err)
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось создать заказ, попробуйте позже."})
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось создать заказ, попробуйте позже."})
 		return
 	}
-	_ = c.sessions.Reset(ctx, chatID)
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+	if err := c.sessions.Reset(ctx, chatID); err != nil {
+		c.log.Warn("reset session", "chat_id", chatID, "err", err)
+	}
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
 		ChatID: chatID,
 		Text: fmt.Sprintf(
 			"Заказ #%s создан! Ищем для вас мастера — мы пришлём уведомление, когда заказ подтвердится.",
-			short(order.ID.String()),
+			Short(order.ID.String()),
 		),
+	})
+}
+
+func (c *Bot) callbackRate(ctx context.Context, b *bot.Bot, u *models.Update) {
+	cq := u.CallbackQuery
+	if cq == nil {
+		return
+	}
+	chatID := cq.Message.Message.Chat.ID
+	shared.AnswerCB(ctx, c.log, b, cq.ID)
+
+	parts := strings.Split(strings.TrimPrefix(cq.Data, "rate:"), ":")
+	if len(parts) != 2 {
+		return
+	}
+	orderID, err := uuid.Parse(parts[0])
+	if err != nil {
+		return
+	}
+	rating, err := strconv.Atoi(parts[1])
+	if err != nil || rating < 1 || rating > 5 {
+		return
+	}
+	snap, err := c.sessions.Load(ctx, chatID)
+	if err != nil || snap.TenantID == nil {
+		return
+	}
+	cli, err := c.clients.GetByTelegram(ctx, *snap.TenantID, cq.From.ID)
+	if err != nil {
+		c.log.Error("get client", "err", err)
+		return
+	}
+	if _, err := c.orders.SubmitReview(ctx, service.SubmitReviewInput{
+		OrderID:  orderID,
+		ClientID: cli.ID,
+		Rating:   rating,
+	}); err != nil {
+		c.log.Warn("submit review", "order_id", orderID, "err", err)
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось сохранить оценку."})
+		return
+	}
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   fmt.Sprintf("Спасибо за оценку %s/5! Мы передадим её мастеру.", strings.Repeat("⭐", rating)),
 	})
 }
 
@@ -399,30 +449,32 @@ func (c *Bot) ordersHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil || snap.TenantID == nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Сначала откройте бота по ссылке от компании."})
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Сначала откройте бота по ссылке от компании."})
 		return
 	}
 	cli, err := c.clients.GetByTelegram(ctx, *snap.TenantID, u.Message.From.ID)
-	if err != nil || c.ordersRepoRef == nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Заказов пока нет."})
+	if err != nil {
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Заказов пока нет."})
 		return
 	}
-	orders, err := c.ordersRepoRef.ListByClient(ctx, cli.ID, 5)
-	if err != nil || len(orders) == 0 {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Заказов пока нет."})
+	orders, err := c.ordersR.ListByClient(ctx, cli.ID, 5)
+	if err != nil {
+		c.log.Error("list orders", "client_id", cli.ID, "err", err)
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось загрузить заказы."})
+		return
+	}
+	if len(orders) == 0 {
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Заказов пока нет."})
 		return
 	}
 	var sb strings.Builder
 	sb.WriteString("Ваши последние заказы:\n\n")
 	for _, o := range orders {
 		sb.WriteString(fmt.Sprintf("• #%s — %s — %s — %.0f ₽\n",
-			short(o.ID.String()), o.ScheduledAt.Format("02.01 15:04"), o.Status, o.Price))
+			Short(o.ID.String()), o.ScheduledAt.Format("02.01 15:04"), o.Status, o.Price))
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: sb.String()})
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: sb.String()})
 }
-
-// SetOrdersRepo wires read access for /orders listings.
-func (c *Bot) SetOrdersRepo(r *storage.OrderRepo) { c.ordersRepoRef = r }
 
 func parseScheduled(dateStr, hourStr string) (time.Time, error) {
 	d, err := time.Parse("2006-01-02", dateStr)
@@ -436,7 +488,8 @@ func parseScheduled(dateStr, hourStr string) (time.Time, error) {
 	return time.Date(d.Year(), d.Month(), d.Day(), h, 0, 0, 0, time.Local), nil
 }
 
-func short(id string) string {
+// Short returns the first 8 characters of an id for compact display.
+func Short(id string) string {
 	if len(id) > 8 {
 		return id[:8]
 	}

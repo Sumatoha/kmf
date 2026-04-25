@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AssignPopover } from "@/components/assign-popover";
 
 const COLUMNS: { status: OrderStatus; title: string }[] = [
   { status: "new", title: "Новые" },
@@ -86,17 +87,22 @@ export default function OrdersPage() {
                           <div className="text-sm font-semibold">
                             {o.price.toLocaleString("ru-RU")} ₽
                           </div>
-                          {o.status !== "done" && o.status !== "cancelled" && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => cancel.mutate(o.id)}
-                              disabled={cancel.isPending}
-                              className="text-red-600 hover:bg-red-50"
-                            >
-                              <X className="size-3" />
-                            </Button>
-                          )}
+                          <div className="flex items-center gap-1">
+                            {o.status !== "done" && o.status !== "cancelled" && (
+                              <AssignPopover orderId={o.id} />
+                            )}
+                            {o.status !== "done" && o.status !== "cancelled" && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => cancel.mutate(o.id)}
+                                disabled={cancel.isPending}
+                                className="text-red-600 hover:bg-red-50"
+                              >
+                                <X className="size-3" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </Card>
                     ))}

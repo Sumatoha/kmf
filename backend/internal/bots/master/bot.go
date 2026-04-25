@@ -37,28 +37,30 @@ type Bot struct {
 	log      *slog.Logger
 }
 
-func New(
-	token string,
-	sessionsRepo *storage.SessionRepo,
-	tenants *storage.TenantRepo,
-	masters *service.MasterService,
-	mastersR *storage.MasterRepo,
-	orders *service.OrderService,
-	ordersR *storage.OrderRepo,
-	services *storage.ServiceRepo,
-	log *slog.Logger,
-) (*Bot, error) {
+type Deps struct {
+	Token    string
+	Sessions *storage.SessionRepo
+	Tenants  *storage.TenantRepo
+	Masters  *service.MasterService
+	MastersR *storage.MasterRepo
+	Orders   *service.OrderService
+	OrdersR  *storage.OrderRepo
+	Services *storage.ServiceRepo
+	Log      *slog.Logger
+}
+
+func New(d Deps) (*Bot, error) {
 	mb := &Bot{
-		sessions: shared.NewSessions(sessionsRepo, botmodel.BotKindMaster),
-		tenants:  tenants,
-		masters:  masters,
-		mastersR: mastersR,
-		orders:   orders,
-		ordersR:  ordersR,
-		services: services,
-		log:      log,
+		sessions: shared.NewSessions(d.Sessions, botmodel.BotKindMaster),
+		tenants:  d.Tenants,
+		masters:  d.Masters,
+		mastersR: d.MastersR,
+		orders:   d.Orders,
+		ordersR:  d.OrdersR,
+		services: d.Services,
+		log:      d.Log,
 	}
-	b, err := bot.New(token, bot.WithDefaultHandler(mb.defaultHandler))
+	b, err := bot.New(d.Token, bot.WithDefaultHandler(mb.defaultHandler))
 	if err != nil {
 		return nil, fmt.Errorf("init master bot: %w", err)
 	}
@@ -68,6 +70,7 @@ func New(
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/orders", bot.MatchTypeExact, mb.ordersHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/pause", bot.MatchTypeExact, mb.pauseHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/resume", bot.MatchTypeExact, mb.resumeHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, mb.helpHandler)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "ord:", bot.MatchTypePrefix, mb.callbackOrder)
 
 	return mb, nil
@@ -75,17 +78,23 @@ func New(
 
 func (m *Bot) Start(ctx context.Context) { m.b.Start(ctx) }
 
-func (m *Bot) SendMessage(ctx context.Context, p *bot.SendMessageParams) (*models.Message, error) {
-	return m.b.SendMessage(ctx, p)
-}
+func (m *Bot) Sender() shared.Sender { return m.b }
+func (m *Bot) Logger() *slog.Logger  { return m.log }
 
 func (m *Bot) defaultHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if u.Message == nil {
 		return
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+	shared.Send(ctx, m.log, b, &bot.SendMessageParams{
 		ChatID: u.Message.Chat.ID,
 		Text:   "Команды: /orders — мои заказы, /pause — приостановить приём, /resume — возобновить.",
+	})
+}
+
+func (m *Bot) helpHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
+	shared.Send(ctx, m.log, b, &bot.SendMessageParams{
+		ChatID: u.Message.Chat.ID,
+		Text: "Команды:\n/orders — мои заказы\n/pause — приостановить приём заказов\n/resume — возобновить",
 	})
 }
 
@@ -106,16 +115,23 @@ func (m *Bot) startHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 		}
 		master, err := m.masters.ActivateByInvite(ctx, token, from.ID, unPtr)
 		if err != nil {
-			_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+			m.log.Info("invite activation failed", "tg_id", from.ID, "err", err)
+			shared.Send(ctx, m.log, b, &bot.SendMessageParams{
 				ChatID: chatID, Text: "Ссылка недействительна или уже использована.",
 			})
 			return
 		}
-		snap, _ := m.sessions.Load(ctx, chatID)
+		snap, err := m.sessions.Load(ctx, chatID)
+		if err != nil {
+			m.log.Error("load session", "chat_id", chatID, "err", err)
+			return
+		}
 		snap.TenantID = &master.TenantID
 		snap.State = "ready"
-		_ = m.sessions.Save(ctx, chatID, snap)
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+		if err := m.sessions.Save(ctx, chatID, snap); err != nil {
+			m.log.Error("save session", "chat_id", chatID, "err", err)
+		}
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{
 			ChatID: chatID,
 			Text: fmt.Sprintf(
 				"Добро пожаловать, %s!\nВы активированы как мастер. Новые заказы будут приходить сюда.\nКоманды: /orders, /pause, /resume.",
@@ -125,24 +141,25 @@ func (m *Bot) startHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 		return
 	}
 
-	// Existing master
 	if _, err := m.masters.GetByTelegram(ctx, from.ID); err == nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "С возвращением! /orders — текущие заказы."})
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "С возвращением! /orders — текущие заказы."})
 		return
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   "Чтобы войти, используйте пригласительную ссылку от вашей компании.",
+	shared.Send(ctx, m.log, b, &bot.SendMessageParams{
+		ChatID: chatID, Text: "Чтобы войти, используйте пригласительную ссылку от вашей компании.",
 	})
 }
 
 func (m *Bot) pauseHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	master, err := m.masters.GetByTelegram(ctx, u.Message.From.ID)
 	if err != nil {
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: u.Message.Chat.ID, Text: "Сначала активируйтесь по пригласительной ссылке."})
 		return
 	}
-	_ = m.masters.SetAvailability(ctx, master.ID, false)
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+	if err := m.masters.SetAvailability(ctx, master.ID, false); err != nil {
+		m.log.Error("set availability", "master_id", master.ID, "err", err)
+	}
+	shared.Send(ctx, m.log, b, &bot.SendMessageParams{
 		ChatID: u.Message.Chat.ID, Text: "Приём заказов приостановлен. /resume чтобы возобновить.",
 	})
 }
@@ -150,10 +167,13 @@ func (m *Bot) pauseHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 func (m *Bot) resumeHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	master, err := m.masters.GetByTelegram(ctx, u.Message.From.ID)
 	if err != nil {
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: u.Message.Chat.ID, Text: "Сначала активируйтесь по пригласительной ссылке."})
 		return
 	}
-	_ = m.masters.SetAvailability(ctx, master.ID, true)
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+	if err := m.masters.SetAvailability(ctx, master.ID, true); err != nil {
+		m.log.Error("set availability", "master_id", master.ID, "err", err)
+	}
+	shared.Send(ctx, m.log, b, &bot.SendMessageParams{
 		ChatID: u.Message.Chat.ID, Text: "Готов принимать заказы.",
 	})
 }
@@ -162,22 +182,27 @@ func (m *Bot) ordersHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
 	master, err := m.masters.GetByTelegram(ctx, u.Message.From.ID)
 	if err != nil {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Сначала активируйтесь по пригласительной ссылке."})
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Сначала активируйтесь по пригласительной ссылке."})
 		return
 	}
 	orders, err := m.ordersR.ListActiveForMaster(ctx, master.ID)
-	if err != nil || len(orders) == 0 {
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Активных заказов нет."})
+	if err != nil {
+		m.log.Error("list orders", "master_id", master.ID, "err", err)
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось загрузить заказы."})
+		return
+	}
+	if len(orders) == 0 {
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Активных заказов нет."})
 		return
 	}
 	for _, o := range orders {
 		text := fmt.Sprintf(
 			"Заказ #%s\nКогда: %s\nАдрес: %s\nСтатус: %s\nСтоимость: %.0f ₽",
-			short(o.ID.String()), o.ScheduledAt.Format("02.01 15:04"), o.AddressText, o.Status, o.Price,
+			Short(o.ID.String()), o.ScheduledAt.Format("02.01 15:04"), o.AddressText, o.Status, o.Price,
 		)
 		var rows [][]models.InlineKeyboardButton
 		switch o.Status {
-		case botmodel.OrderStatusConfirmed:
+		case botmodel.OrderStatusAssigned, botmodel.OrderStatusConfirmed:
 			rows = [][]models.InlineKeyboardButton{{
 				{Text: "▶️ Начать", CallbackData: fmt.Sprintf("ord:start:%s", o.ID)},
 			}}
@@ -186,7 +211,7 @@ func (m *Bot) ordersHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 				{Text: "✅ Завершить", CallbackData: fmt.Sprintf("ord:done:%s", o.ID)},
 			}}
 		}
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{
 			ChatID: chatID, Text: text,
 			ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: rows},
 		})
@@ -200,7 +225,7 @@ func (m *Bot) callbackOrder(ctx context.Context, b *bot.Bot, u *models.Update) {
 		return
 	}
 	chatID := cq.Message.Message.Chat.ID
-	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID})
+	shared.AnswerCB(ctx, m.log, b, cq.ID)
 
 	parts := strings.Split(cq.Data, ":")
 	if len(parts) != 3 {
@@ -213,42 +238,54 @@ func (m *Bot) callbackOrder(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 	master, err := m.masters.GetByTelegram(ctx, cq.From.ID)
 	if err != nil {
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Сначала активируйтесь по пригласительной ссылке."})
 		return
 	}
 
 	switch action {
 	case "accept":
-		_, err := m.orders.AcceptByMaster(ctx, orderID, master.ID)
-		if err != nil {
+		if _, err := m.orders.AcceptByMaster(ctx, orderID, master.ID); err != nil {
 			if errors.Is(err, service.ErrInvalidState) {
-				_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ уже взят другим мастером."})
+				shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ уже взят другим мастером."})
 				return
 			}
-			m.log.Error("accept order", "err", err)
+			m.log.Error("accept order", "order_id", orderID, "master_id", master.ID, "err", err)
+			shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось принять заказ."})
 			return
 		}
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ принят. Удачной работы!"})
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ принят. Удачной работы!"})
 
 	case "decline":
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Ок, заказ показан другим мастерам."})
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Ок, заказ показан другим мастерам."})
 
 	case "start":
 		if _, err := m.orders.Start(ctx, orderID, master.ID); err != nil {
-			_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось начать заказ."})
+			if errors.Is(err, service.ErrInvalidState) {
+				shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Этот заказ нельзя начать сейчас."})
+				return
+			}
+			m.log.Error("start order", "order_id", orderID, "err", err)
+			shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось начать заказ."})
 			return
 		}
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Уборка начата."})
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Уборка начата."})
 
 	case "done":
 		if _, err := m.orders.Complete(ctx, orderID, master.ID); err != nil {
-			_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось завершить заказ."})
+			if errors.Is(err, service.ErrInvalidState) {
+				shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Этот заказ уже не в работе."})
+				return
+			}
+			m.log.Error("complete order", "order_id", orderID, "err", err)
+			shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Не удалось завершить заказ."})
 			return
 		}
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ завершён. Спасибо!"})
+		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ завершён. Спасибо!"})
 	}
 }
 
-func short(id string) string {
+// Short returns the first 8 characters of an id for compact display.
+func Short(id string) string {
 	if len(id) > 8 {
 		return id[:8]
 	}

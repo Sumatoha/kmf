@@ -47,6 +47,53 @@ func getOrderHandler(d Deps) http.HandlerFunc {
 	}
 }
 
+type assignOrderReq struct {
+	MasterID string `json:"master_id"`
+}
+
+func assignOrderHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid id")
+			return
+		}
+		var req assignOrderReq
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		masterID, err := uuid.Parse(req.MasterID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid master_id")
+			return
+		}
+
+		existing, err := d.OrdersR.GetByID(r.Context(), id)
+		if err != nil {
+			if mapServiceError(w, err) {
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if existing.TenantID != tenantIDFrom(r.Context()) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+
+		o, err := d.Orders.AssignByAdmin(r.Context(), id, masterID)
+		if err != nil {
+			if mapServiceError(w, err) {
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, o)
+	}
+}
+
 type cancelOrderReq struct {
 	Reason string `json:"reason"`
 }

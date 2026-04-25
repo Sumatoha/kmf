@@ -102,22 +102,85 @@ func (s *OrderService) broadcastToMasters(ctx context.Context, order *model.Orde
 	}
 }
 
-// AcceptByMaster atomically assigns and confirms an order. Returns ErrInvalidState
-// if another master already grabbed it.
-func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
-	assigned, err := s.orders.Assign(ctx, orderID, masterID)
+// AssignByAdmin manually assigns a master to an order from the CRM, then
+// notifies the master and the client. Bypasses the broadcast/race flow.
+func (s *OrderService) AssignByAdmin(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+	master, err := s.masters.GetByID(ctx, masterID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrInvalidState
 	}
 	if err != nil {
-		return nil, fmt.Errorf("assign: %w", err)
+		return nil, fmt.Errorf("get master: %w", err)
 	}
-	confirmed, err := s.orders.Confirm(ctx, assigned.ID, masterID)
+	order, err := s.orders.AssignByAdmin(ctx, orderID, masterID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrInvalidState
+	}
 	if err != nil {
-		return assigned, fmt.Errorf("confirm: %w", err)
+		return nil, fmt.Errorf("assign by admin: %w", err)
 	}
-	s.notifyClient(ctx, confirmed, masterID)
-	return confirmed, nil
+	if order.TenantID != master.TenantID {
+		return nil, ErrInvalidState
+	}
+
+	go func(ctx context.Context) {
+		svc, err := s.services.GetByID(ctx, order.ServiceID)
+		if err != nil {
+			s.log.Warn("notify assigned: load service", "err", err)
+			return
+		}
+		if err := s.notifier.NotifyNewOrder(ctx, master, order, svc); err != nil {
+			s.log.Warn("notify assigned master", "err", err)
+		}
+	}(context.Background())
+	return order, nil
+}
+
+// AcceptByMaster atomically claims an order for a master. Handles two cases:
+//
+//  1. status=new — broadcast flow: first to claim wins; we Assign then Confirm.
+//  2. status=assigned & master_id=us — admin pre-assigned this master; just Confirm.
+//
+// Returns ErrInvalidState if another master already grabbed it or it's terminal.
+func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+	current, err := s.orders.GetByID(ctx, orderID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrOrderNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get order: %w", err)
+	}
+
+	switch current.Status {
+	case model.OrderStatusNew:
+		assigned, err := s.orders.Assign(ctx, orderID, masterID)
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, ErrInvalidState
+		}
+		if err != nil {
+			return nil, fmt.Errorf("assign: %w", err)
+		}
+		confirmed, err := s.orders.Confirm(ctx, assigned.ID, masterID)
+		if err != nil {
+			return assigned, fmt.Errorf("confirm: %w", err)
+		}
+		s.notifyClient(ctx, confirmed, masterID)
+		return confirmed, nil
+
+	case model.OrderStatusAssigned:
+		if current.MasterID == nil || *current.MasterID != masterID {
+			return nil, ErrInvalidState
+		}
+		confirmed, err := s.orders.Confirm(ctx, orderID, masterID)
+		if err != nil {
+			return nil, fmt.Errorf("confirm: %w", err)
+		}
+		s.notifyClient(ctx, confirmed, masterID)
+		return confirmed, nil
+
+	default:
+		return nil, ErrInvalidState
+	}
 }
 
 func (s *OrderService) notifyClient(ctx context.Context, order *model.Order, masterID uuid.UUID) {

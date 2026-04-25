@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -14,10 +15,15 @@ type Config struct {
 	HTTPAddr    string
 	DatabaseURL string
 	JWTSecret   string
+	JWTTTL      time.Duration
 	LogLevel    string
+
+	CORSOrigins []string
 
 	ClientBot BotConfig
 	MasterBot BotConfig
+
+	SessionRetention time.Duration
 }
 
 type BotConfig struct {
@@ -34,7 +40,9 @@ func Load() (*Config, error) {
 		HTTPAddr:    env("HTTP_ADDR", ":8080"),
 		DatabaseURL: env("DATABASE_URL", ""),
 		JWTSecret:   env("JWT_SECRET", ""),
+		JWTTTL:      envDuration("JWT_TTL", 7*24*time.Hour),
 		LogLevel:    env("LOG_LEVEL", "info"),
+		CORSOrigins: envList("CORS_ORIGINS"),
 		ClientBot: BotConfig{
 			Token:    env("TELEGRAM_CLIENT_BOT_TOKEN", ""),
 			Username: env("TELEGRAM_CLIENT_BOT_USERNAME", "CleanOpsBookingBot"),
@@ -43,6 +51,7 @@ func Load() (*Config, error) {
 			Token:    env("TELEGRAM_MASTER_BOT_TOKEN", ""),
 			Username: env("TELEGRAM_MASTER_BOT_USERNAME", "CleanOpsMasterBot"),
 		},
+		SessionRetention: envDuration("BOT_SESSION_RETENTION", 30*24*time.Hour),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -74,6 +83,33 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envList(key string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 var ErrMissingConfig = errors.New("missing required config")

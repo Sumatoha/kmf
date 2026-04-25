@@ -24,35 +24,39 @@ import (
 )
 
 type Bot struct {
-	b             *bot.Bot
-	sessions      *shared.Sessions
-	tenants       *storage.TenantRepo
-	clients       *storage.ClientRepo
-	services      *storage.ServiceRepo
-	orders        *service.OrderService
-	ordersRepoRef *storage.OrderRepo
-	log           *slog.Logger
+	b        *bot.Bot
+	sessions *shared.Sessions
+	tenants  *storage.TenantRepo
+	clients  *storage.ClientRepo
+	services *storage.ServiceRepo
+	ordersR  *storage.OrderRepo
+	orders   *service.OrderService
+	log      *slog.Logger
 }
 
-func New(
-	token string,
-	sessionsRepo *storage.SessionRepo,
-	tenants *storage.TenantRepo,
-	clients *storage.ClientRepo,
-	services *storage.ServiceRepo,
-	orders *service.OrderService,
-	log *slog.Logger,
-) (*Bot, error) {
+type Deps struct {
+	Token    string
+	Sessions *storage.SessionRepo
+	Tenants  *storage.TenantRepo
+	Clients  *storage.ClientRepo
+	Services *storage.ServiceRepo
+	OrdersR  *storage.OrderRepo
+	Orders   *service.OrderService
+	Log      *slog.Logger
+}
+
+func New(d Deps) (*Bot, error) {
 	cb := &Bot{
-		sessions: shared.NewSessions(sessionsRepo, botmodel.BotKindClient),
-		tenants:  tenants,
-		clients:  clients,
-		services: services,
-		orders:   orders,
-		log:      log,
+		sessions: shared.NewSessions(d.Sessions, botmodel.BotKindClient),
+		tenants:  d.Tenants,
+		clients:  d.Clients,
+		services: d.Services,
+		ordersR:  d.OrdersR,
+		orders:   d.Orders,
+		log:      d.Log,
 	}
 
-	b, err := bot.New(token, bot.WithDefaultHandler(cb.defaultHandler))
+	b, err := bot.New(d.Token, bot.WithDefaultHandler(cb.defaultHandler))
 	if err != nil {
 		return nil, fmt.Errorf("init client bot: %w", err)
 	}
@@ -62,10 +66,12 @@ func New(
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/cancel", bot.MatchTypeExact, cb.cancelHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/book", bot.MatchTypeExact, cb.bookHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/orders", bot.MatchTypeExact, cb.ordersHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, cb.helpHandler)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "svc:", bot.MatchTypePrefix, cb.callbackService)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "date:", bot.MatchTypePrefix, cb.callbackDate)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "time:", bot.MatchTypePrefix, cb.callbackTime)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "confirm:", bot.MatchTypePrefix, cb.callbackConfirm)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "rate:", bot.MatchTypePrefix, cb.callbackRate)
 
 	return cb, nil
 }
@@ -75,6 +81,12 @@ func (c *Bot) Start(ctx context.Context) {
 	c.b.Start(ctx)
 }
 
+// Sender exposes the raw bot for the notifier package.
+func (c *Bot) Sender() shared.Sender { return c.b }
+
+// Logger gives the notifier access to the same scoped logger.
+func (c *Bot) Logger() *slog.Logger { return c.log }
+
 func (c *Bot) defaultHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if u.Message == nil || u.Message.From == nil {
 		return
@@ -82,7 +94,10 @@ func (c *Bot) defaultHandler(ctx context.Context, b *bot.Bot, u *models.Update) 
 	chatID := u.Message.Chat.ID
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil {
-		c.log.Error("load session", "err", err)
+		c.log.Error("load session", "chat_id", chatID, "err", err)
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+			ChatID: chatID, Text: "Что-то пошло не так. Попробуйте /book чтобы начать заново.",
+		})
 		return
 	}
 
@@ -92,12 +107,11 @@ func (c *Bot) defaultHandler(ctx context.Context, b *bot.Bot, u *models.Update) 
 	case stateAwaitingPhone:
 		c.handlePhone(ctx, b, u, snap)
 	default:
-		// Treat plain messages as nudges to start booking.
 		text := strings.TrimSpace(u.Message.Text)
 		if text == "" {
 			return
 		}
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{
 			ChatID: chatID,
 			Text:   "Используйте /book чтобы оформить уборку или /orders для просмотра ваших заказов.",
 		})
@@ -107,15 +121,20 @@ func (c *Bot) defaultHandler(ctx context.Context, b *bot.Bot, u *models.Update) 
 func (c *Bot) cancelHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
 	if err := c.sessions.Reset(ctx, chatID); err != nil {
-		c.log.Error("reset session", "err", err)
+		c.log.Warn("reset session", "chat_id", chatID, "err", err)
 	}
-	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
 		ChatID: chatID,
 		Text:   "Действие отменено. Введите /book чтобы начать заново.",
 	})
 }
 
-// SendMessage exposes the underlying client for the Notifier implementation.
-func (c *Bot) SendMessage(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
-	return c.b.SendMessage(ctx, params)
+func (c *Bot) helpHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
+	shared.Send(ctx, c.log, b, &bot.SendMessageParams{
+		ChatID: u.Message.Chat.ID,
+		Text: "Команды:\n" +
+			"/book — записаться на уборку\n" +
+			"/orders — мои заказы\n" +
+			"/cancel — отменить текущее действие",
+	})
 }
