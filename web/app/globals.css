@@ -20,6 +20,29 @@
   --color-brand-900: #064e3b;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Inter", "Segoe UI", sans-serif;
+
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-pulse-slow: pulse-slow 4s ease-in-out infinite;
+  --animate-blob: blob 12s ease-in-out infinite;
+  --animate-fade-up: fade-up 0.6s ease-out both;
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes pulse-slow {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+  @keyframes blob {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(30px, -30px) scale(1.1); }
+    66% { transform: translate(-20px, 20px) scale(0.95); }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
 }
 
 html, body {
@@ -27,6 +50,7 @@ html, body {
   color: var(--color-text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  scroll-behavior: smooth;
 }
 
 * {
@@ -36,4 +60,38 @@ html, body {
 ::selection {
   background: var(--color-brand-200);
   color: var(--color-brand-900);
+}
+
+/* Decorative grid pattern */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.bg-dots {
+  background-image: radial-gradient(rgba(0,0,0,0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Mesh gradient for hero */
+.mesh-bg {
+  background:
+    radial-gradient(ellipse at top left, rgba(16,185,129,0.18), transparent 50%),
+    radial-gradient(ellipse at top right, rgba(56,189,248,0.12), transparent 50%),
+    radial-gradient(ellipse at bottom, rgba(167,243,208,0.18), transparent 60%);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--color-brand-700) 0%, var(--color-brand-500) 50%, #14b8a6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
 }
