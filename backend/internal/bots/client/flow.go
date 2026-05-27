@@ -525,7 +525,7 @@ func Short(id string) string {
 func sanitizePhone(s string) string {
 	var buf []byte
 	for _, c := range []byte(s) {
-		if (c >= '0' && c <= '9') || c == '+' || c == '-' || c == ' ' || c == '(' || c == ')' {
+		if (c >= '0' && c <= '9') || c == '+' || c == '-' || c == ' ' {
 			buf = append(buf, c)
 		}
 	}
