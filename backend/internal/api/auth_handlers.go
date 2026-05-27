@@ -70,7 +70,8 @@ func loginHandler(d Deps) http.HandlerFunc {
 			if mapServiceError(w, err) {
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("login", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, res)

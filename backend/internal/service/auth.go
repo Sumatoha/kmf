@@ -10,6 +10,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 	"github.com/sumatoha/kmf/backend/internal/storage"
 	"golang.org/x/crypto/bcrypt"
@@ -23,6 +24,7 @@ var (
 )
 
 type AuthService struct {
+	pool      *pgxpool.Pool
 	users     *storage.UserRepo
 	tenants   *storage.TenantRepo
 	services  *storage.ServiceRepo
@@ -30,11 +32,11 @@ type AuthService struct {
 	ttl       time.Duration
 }
 
-func NewAuthService(users *storage.UserRepo, tenants *storage.TenantRepo, services *storage.ServiceRepo, jwtSecret string, ttl time.Duration) *AuthService {
+func NewAuthService(pool *pgxpool.Pool, users *storage.UserRepo, tenants *storage.TenantRepo, services *storage.ServiceRepo, jwtSecret string, ttl time.Duration) *AuthService {
 	if ttl == 0 {
 		ttl = 7 * 24 * time.Hour
 	}
-	return &AuthService{users: users, tenants: tenants, services: services, jwtSecret: []byte(jwtSecret), ttl: ttl}
+	return &AuthService{pool: pool, users: users, tenants: tenants, services: services, jwtSecret: []byte(jwtSecret), ttl: ttl}
 }
 
 type Claims struct {
@@ -76,6 +78,8 @@ func (s *AuthService) issue(user *model.User) (string, error) {
 		TenantID: user.TenantID,
 		Role:     user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "cleanops",
+			Audience:  jwt.ClaimStrings{"cleanops-api"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Subject:   user.ID.String(),
@@ -116,8 +120,11 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*LoginRes
 	if !slugRe.MatchString(in.TenantSlug) {
 		return nil, fmt.Errorf("invalid slug (use a-z, 0-9, dashes; 3-32 chars)")
 	}
-	if len(in.Password) < 6 {
-		return nil, fmt.Errorf("password must be at least 6 characters")
+	if len(in.Password) < 8 {
+		return nil, fmt.Errorf("password must be at least 8 characters")
+	}
+	if len(in.Password) > 72 {
+		return nil, fmt.Errorf("password must be at most 72 characters")
 	}
 
 	if _, err := s.tenants.GetBySlug(ctx, in.TenantSlug); err == nil {
@@ -131,23 +138,39 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*LoginRes
 		return nil, err
 	}
 
-	tenant, err := s.tenants.Create(ctx, in.TenantSlug, in.TenantName)
-	if err != nil {
-		return nil, fmt.Errorf("create tenant: %w", err)
-	}
 	hash, err := HashPassword(in.Password)
 	if err != nil {
 		return nil, err
 	}
-	user, err := s.users.Create(ctx, tenant.ID, in.Email, hash, in.FullName, model.RoleOwner)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	tenantRepo := storage.NewTenantRepo(tx)
+	userRepo := storage.NewUserRepo(tx)
+
+	tenant, err := tenantRepo.Create(ctx, in.TenantSlug, in.TenantName)
+	if err != nil {
+		return nil, fmt.Errorf("create tenant: %w", err)
+	}
+	user, err := userRepo.Create(ctx, tenant.ID, in.Email, hash, in.FullName, model.RoleOwner)
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 	if s.services != nil {
-		if err := seedDefaultServices(ctx, s.services, tenant.ID); err != nil {
+		serviceRepo := storage.NewServiceRepo(tx)
+		if err := seedDefaultServices(ctx, serviceRepo, tenant.ID); err != nil {
 			return nil, fmt.Errorf("seed services: %w", err)
 		}
 	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+
 	tok, err := s.issue(user)
 	if err != nil {
 		return nil, err

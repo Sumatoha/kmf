@@ -16,7 +16,8 @@ func exportOrdersCSV(d Deps) http.HandlerFunc {
 		from, to := parseRange(r)
 		orders, err := d.OrdersR.ListForExport(r.Context(), tenantIDFrom(r.Context()), from, to)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("export", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 
@@ -71,7 +72,8 @@ func exportClientsCSV(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		clients, err := d.Clients.ListByTenant(r.Context(), tenantIDFrom(r.Context()))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("export", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")

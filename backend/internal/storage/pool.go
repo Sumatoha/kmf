@@ -17,6 +17,8 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg.MinConns = 2
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 10 * time.Minute
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "30000"
+	cfg.ConnConfig.RuntimeParams["lock_timeout"] = "5000"
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

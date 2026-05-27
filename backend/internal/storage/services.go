@@ -4,13 +4,12 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-type ServiceRepo struct{ pool *pgxpool.Pool }
+type ServiceRepo struct{ pool DB }
 
-func NewServiceRepo(pool *pgxpool.Pool) *ServiceRepo { return &ServiceRepo{pool: pool} }
+func NewServiceRepo(pool DB) *ServiceRepo { return &ServiceRepo{pool: pool} }
 
 const serviceCols = "id, tenant_id, name, description, base_price, duration_minutes, is_active, sort_order, created_at, updated_at"
 
@@ -32,8 +31,8 @@ func (r *ServiceRepo) Create(ctx context.Context, tenantID uuid.UUID, name strin
 	return scanService(row)
 }
 
-func (r *ServiceRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.Service, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+serviceCols+` FROM services WHERE id = $1`, id)
+func (r *ServiceRepo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*model.Service, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+serviceCols+` FROM services WHERE id = $1 AND tenant_id = $2`, id, tenantID)
 	return scanService(row)
 }
 
@@ -75,10 +74,10 @@ func (r *ServiceRepo) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]*
 	return out, rows.Err()
 }
 
-func (r *ServiceRepo) Update(ctx context.Context, id uuid.UUID, name string, description *string, price float64, duration int, isActive bool) error {
+func (r *ServiceRepo) Update(ctx context.Context, tenantID, id uuid.UUID, name string, description *string, price float64, duration int, isActive bool) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE services
 		SET name = $2, description = $3, base_price = $4, duration_minutes = $5, is_active = $6
-		WHERE id = $1`, id, name, description, price, duration, isActive)
+		WHERE id = $1 AND tenant_id = $7`, id, name, description, price, duration, isActive, tenantID)
 	return err
 }

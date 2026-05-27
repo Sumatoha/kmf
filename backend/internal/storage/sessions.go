@@ -5,13 +5,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-type SessionRepo struct{ pool *pgxpool.Pool }
+type SessionRepo struct{ pool DB }
 
-func NewSessionRepo(pool *pgxpool.Pool) *SessionRepo { return &SessionRepo{pool: pool} }
+func NewSessionRepo(pool DB) *SessionRepo { return &SessionRepo{pool: pool} }
 
 const sessionCols = "id, kind, chat_id, tenant_id, state, data, updated_at"
 

@@ -25,6 +25,23 @@ const (
 	OrderStatusCancelled  OrderStatus = "cancelled"
 )
 
+func (s OrderStatus) Valid() bool {
+	switch s {
+	case OrderStatusNew, OrderStatusAssigned, OrderStatusConfirmed,
+		OrderStatusInProgress, OrderStatusDone, OrderStatusCancelled:
+		return true
+	}
+	return false
+}
+
+func (r UserRole) Valid() bool {
+	switch r {
+	case RoleOwner, RoleAdmin, RoleDispatcher:
+		return true
+	}
+	return false
+}
+
 type BotKind string
 
 const (
@@ -66,7 +83,7 @@ type Master struct {
 	CompletedOrders   int        `json:"completed_orders"`
 	IsActive          bool       `json:"is_active"`
 	IsAvailable       bool       `json:"is_available"`
-	InviteToken       *string    `json:"invite_token,omitempty"`
+	InviteToken       *string    `json:"-"`
 	InvitedAt         *time.Time `json:"invited_at,omitempty"`
 	ActivatedAt       *time.Time `json:"activated_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
@@ -134,7 +151,7 @@ type Webhook struct {
 	ID          uuid.UUID `json:"id"`
 	TenantID    uuid.UUID `json:"tenant_id"`
 	URL         string    `json:"url"`
-	Secret      string    `json:"secret"`
+	Secret      string    `json:"-"`
 	Events      []string  `json:"events"`
 	Description *string   `json:"description,omitempty"`
 	IsActive    bool      `json:"is_active"`

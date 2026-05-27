@@ -12,7 +12,8 @@ func listMastersHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := d.Masters.ListByTenant(r.Context(), tenantIDFrom(r.Context()))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("list masters", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -41,7 +42,8 @@ func inviteMasterHandler(d Deps) http.HandlerFunc {
 			Phone:    req.Phone,
 		})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("invite master", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusCreated, res)
@@ -64,8 +66,10 @@ func setMasterAvailabilityHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
-		if err := d.Masters.SetAvailability(r.Context(), id, req.Available); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		tenantID := tenantIDFrom(r.Context())
+		if err := d.Masters.SetAvailability(r.Context(), tenantID, id, req.Available); err != nil {
+			d.Log.Error("set availability", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

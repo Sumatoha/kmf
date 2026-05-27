@@ -283,7 +283,7 @@ func (c *Bot) handlePhone(ctx context.Context, b *bot.Bot, u *models.Update, sna
 		c.log.Error("get client", "err", err)
 		return
 	}
-	if err := c.clients.UpdateContact(ctx, cli.ID, nil, &phone); err != nil {
+	if err := c.clients.UpdateContact(ctx, *snap.TenantID, cli.ID, nil, &phone); err != nil {
 		c.log.Error("update contact", "client_id", cli.ID, "err", err)
 	}
 	snap.State = stateConfirming
@@ -304,7 +304,7 @@ func (c *Bot) showConfirmation(ctx context.Context, b *bot.Bot, chatID int64, sn
 		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Сессия истекла, введите /book чтобы начать заново."})
 		return
 	}
-	svc, err := c.services.GetByID(ctx, svcUUID)
+	svc, err := c.services.GetByID(ctx, *snap.TenantID, svcUUID)
 	if err != nil {
 		c.log.Error("get service", "service_id", svcUUID, "err", err)
 		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Услуга недоступна. Введите /book заново."})
@@ -431,6 +431,7 @@ func (c *Bot) callbackRate(ctx context.Context, b *bot.Bot, u *models.Update) {
 		return
 	}
 	if _, err := c.orders.SubmitReview(ctx, service.SubmitReviewInput{
+		TenantID: *snap.TenantID,
 		OrderID:  orderID,
 		ClientID: cli.ID,
 		Rating:   rating,

@@ -4,13 +4,12 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-type WebhookRepo struct{ pool *pgxpool.Pool }
+type WebhookRepo struct{ pool DB }
 
-func NewWebhookRepo(pool *pgxpool.Pool) *WebhookRepo { return &WebhookRepo{pool: pool} }
+func NewWebhookRepo(pool DB) *WebhookRepo { return &WebhookRepo{pool: pool} }
 
 const webhookCols = "id, tenant_id, url, secret, events, description, is_active, created_at"
 
@@ -74,8 +73,8 @@ func (r *WebhookRepo) ListActiveSubscribed(ctx context.Context, tenantID uuid.UU
 	return out, rows.Err()
 }
 
-func (r *WebhookRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.Webhook, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+webhookCols+` FROM webhooks WHERE id = $1`, id)
+func (r *WebhookRepo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*model.Webhook, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+webhookCols+` FROM webhooks WHERE id = $1 AND tenant_id = $2`, id, tenantID)
 	return scanWebhook(row)
 }
 

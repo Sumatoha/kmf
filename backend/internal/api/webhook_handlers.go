@@ -14,11 +14,21 @@ type createWebhookReq struct {
 	Description *string  `json:"description"`
 }
 
+type webhookCreatedResp struct {
+	ID          uuid.UUID `json:"id"`
+	URL         string    `json:"url"`
+	Secret      string    `json:"secret"`
+	Events      []string  `json:"events"`
+	Description *string   `json:"description,omitempty"`
+	IsActive    bool      `json:"is_active"`
+}
+
 func listWebhooksHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := d.Webhooks.List(r.Context(), tenantIDFrom(r.Context()))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("list webhooks", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -36,7 +46,7 @@ func createWebhookHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "url required")
 			return
 		}
-		hook, err := d.Webhooks.Create(r.Context(), service.CreateWebhookInput{
+		hook, secret, err := d.Webhooks.Create(r.Context(), service.CreateWebhookInput{
 			TenantID:    tenantIDFrom(r.Context()),
 			URL:         req.URL,
 			Events:      req.Events,
@@ -46,7 +56,14 @@ func createWebhookHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, hook)
+		writeJSON(w, http.StatusCreated, webhookCreatedResp{
+			ID:          hook.ID,
+			URL:         hook.URL,
+			Secret:      secret,
+			Events:      hook.Events,
+			Description: hook.Description,
+			IsActive:    hook.IsActive,
+		})
 	}
 }
 
@@ -58,7 +75,8 @@ func deleteWebhookHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		if err := d.Webhooks.Delete(r.Context(), tenantIDFrom(r.Context()), id); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("delete webhook", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

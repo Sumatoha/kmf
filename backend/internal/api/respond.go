@@ -29,7 +29,6 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errResp{Error: msg})
 }
 
-// mapServiceError translates known service-layer errors to HTTP statuses.
 func mapServiceError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, service.ErrInvalidCredentials):
@@ -48,7 +47,10 @@ func mapServiceError(w http.ResponseWriter, err error) bool {
 	return true
 }
 
+const maxRequestBodySize = 1 << 20 // 1 MB
+
 func decodeJSON(r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(nil, r.Body, maxRequestBodySize)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(dst)

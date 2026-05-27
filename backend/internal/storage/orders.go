@@ -6,13 +6,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-type OrderRepo struct{ pool *pgxpool.Pool }
+type OrderRepo struct{ pool DB }
 
-func NewOrderRepo(pool *pgxpool.Pool) *OrderRepo { return &OrderRepo{pool: pool} }
+func NewOrderRepo(pool DB) *OrderRepo { return &OrderRepo{pool: pool} }
 
 const orderCols = `id, tenant_id, client_id, service_id, master_id, address_text, scheduled_at,
 	status, price, notes, cancellation_reason,
@@ -53,7 +52,12 @@ func (r *OrderRepo) Create(ctx context.Context, p CreateOrderParams) (*model.Ord
 	return scanOrder(row)
 }
 
-func (r *OrderRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.Order, error) {
+func (r *OrderRepo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*model.Order, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+orderCols+` FROM orders WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	return scanOrder(row)
+}
+
+func (r *OrderRepo) GetByIDGlobal(ctx context.Context, id uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `SELECT `+orderCols+` FROM orders WHERE id = $1`, id)
 	return scanOrder(row)
 }
@@ -91,7 +95,7 @@ func (r *OrderRepo) ListByTenant(ctx context.Context, tenantID uuid.UUID, status
 }
 
 func (r *OrderRepo) ListByClient(ctx context.Context, clientID uuid.UUID, limit int) ([]*model.Order, error) {
-	if limit <= 0 {
+	if limit <= 0 || limit > 200 {
 		limit = 20
 	}
 	rows, err := r.pool.Query(ctx,
@@ -132,65 +136,60 @@ func (r *OrderRepo) ListActiveForMaster(ctx context.Context, masterID uuid.UUID)
 	return out, rows.Err()
 }
 
-func (r *OrderRepo) Assign(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+func (r *OrderRepo) Assign(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
-		SET master_id = $2, status = 'assigned', assigned_at = NOW()
-		WHERE id = $1 AND status = 'new'
-		RETURNING `+orderCols, orderID, masterID)
+		SET master_id = $3, status = 'assigned', assigned_at = NOW()
+		WHERE id = $1 AND tenant_id = $2 AND status = 'new'
+		RETURNING `+orderCols, orderID, tenantID, masterID)
 	return scanOrder(row)
 }
 
-// AssignByAdmin allows reassigning a master at any non-terminal stage. Used by
-// the CRM when a dispatcher manually picks the executor.
-func (r *OrderRepo) AssignByAdmin(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+func (r *OrderRepo) AssignByAdmin(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
-		SET master_id = $2, status = 'assigned', assigned_at = NOW(),
+		SET master_id = $3, status = 'assigned', assigned_at = NOW(),
 		    confirmed_at = NULL, started_at = NULL
-		WHERE id = $1 AND status NOT IN ('done','cancelled')
-		RETURNING `+orderCols, orderID, masterID)
+		WHERE id = $1 AND tenant_id = $2 AND status NOT IN ('done','cancelled')
+		RETURNING `+orderCols, orderID, tenantID, masterID)
 	return scanOrder(row)
 }
 
-func (r *OrderRepo) Confirm(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+func (r *OrderRepo) Confirm(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
 		SET status = 'confirmed', confirmed_at = NOW()
-		WHERE id = $1 AND master_id = $2 AND status = 'assigned'
-		RETURNING `+orderCols, orderID, masterID)
+		WHERE id = $1 AND tenant_id = $2 AND master_id = $3 AND status = 'assigned'
+		RETURNING `+orderCols, orderID, tenantID, masterID)
 	return scanOrder(row)
 }
 
-func (r *OrderRepo) Decline(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+func (r *OrderRepo) Decline(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
 		SET master_id = NULL, status = 'new', assigned_at = NULL
-		WHERE id = $1 AND master_id = $2 AND status = 'assigned'
-		RETURNING `+orderCols, orderID, masterID)
+		WHERE id = $1 AND tenant_id = $2 AND master_id = $3 AND status = 'assigned'
+		RETURNING `+orderCols, orderID, tenantID, masterID)
 	return scanOrder(row)
 }
 
-// Start moves an order to in_progress. Accepts both 'assigned' (admin
-// pre-assigned) and 'confirmed' (master accepted via broadcast) as starting
-// points so admin-assigned orders don't require an extra Accept tap.
-func (r *OrderRepo) Start(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+func (r *OrderRepo) Start(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
 		SET status = 'in_progress',
 		    started_at = NOW(),
 		    confirmed_at = COALESCE(confirmed_at, NOW())
-		WHERE id = $1 AND master_id = $2 AND status IN ('assigned','confirmed')
-		RETURNING `+orderCols, orderID, masterID)
+		WHERE id = $1 AND tenant_id = $2 AND master_id = $3 AND status IN ('assigned','confirmed')
+		RETURNING `+orderCols, orderID, tenantID, masterID)
 	return scanOrder(row)
 }
 
-func (r *OrderRepo) Complete(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
+func (r *OrderRepo) Complete(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
 		SET status = 'done', completed_at = NOW()
-		WHERE id = $1 AND master_id = $2 AND status = 'in_progress'
-		RETURNING `+orderCols, orderID, masterID)
+		WHERE id = $1 AND tenant_id = $2 AND master_id = $3 AND status = 'in_progress'
+		RETURNING `+orderCols, orderID, tenantID, masterID)
 	return scanOrder(row)
 }
 
@@ -220,8 +219,8 @@ func (r *OrderRepo) ListNeedingReminder(ctx context.Context, lead time.Duration)
 	return out, rows.Err()
 }
 
-func (r *OrderRepo) MarkReminded(ctx context.Context, orderID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `UPDATE orders SET reminded_at = NOW() WHERE id = $1`, orderID)
+func (r *OrderRepo) MarkReminded(ctx context.Context, tenantID, orderID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `UPDATE orders SET reminded_at = NOW() WHERE id = $1 AND tenant_id = $2`, orderID, tenantID)
 	return err
 }
 
@@ -230,7 +229,8 @@ func (r *OrderRepo) ListForExport(ctx context.Context, tenantID uuid.UUID, from,
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+orderCols+` FROM orders
 		WHERE tenant_id = $1 AND scheduled_at BETWEEN $2 AND $3
-		ORDER BY scheduled_at DESC`, tenantID, from, to)
+		ORDER BY scheduled_at DESC
+		LIMIT 50000`, tenantID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -246,11 +246,11 @@ func (r *OrderRepo) ListForExport(ctx context.Context, tenantID uuid.UUID, from,
 	return out, rows.Err()
 }
 
-func (r *OrderRepo) Cancel(ctx context.Context, orderID uuid.UUID, reason string) (*model.Order, error) {
+func (r *OrderRepo) Cancel(ctx context.Context, tenantID, orderID uuid.UUID, reason string) (*model.Order, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE orders
-		SET status = 'cancelled', cancelled_at = NOW(), cancellation_reason = $2
-		WHERE id = $1 AND status NOT IN ('done','cancelled')
-		RETURNING `+orderCols, orderID, reason)
+		SET status = 'cancelled', cancelled_at = NOW(), cancellation_reason = $3
+		WHERE id = $1 AND tenant_id = $2 AND status NOT IN ('done','cancelled')
+		RETURNING `+orderCols, orderID, tenantID, reason)
 	return scanOrder(row)
 }

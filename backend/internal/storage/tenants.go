@@ -4,13 +4,12 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-type TenantRepo struct{ pool *pgxpool.Pool }
+type TenantRepo struct{ pool DB }
 
-func NewTenantRepo(pool *pgxpool.Pool) *TenantRepo { return &TenantRepo{pool: pool} }
+func NewTenantRepo(pool DB) *TenantRepo { return &TenantRepo{pool: pool} }
 
 const tenantCols = "id, slug, name, timezone, currency, is_active, created_at, updated_at"
 

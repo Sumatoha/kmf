@@ -11,7 +11,8 @@ func listServicesHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := d.Services.ListByTenant(r.Context(), tenantIDFrom(r.Context()))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("list services", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -38,7 +39,8 @@ func createServiceHandler(d Deps) http.HandlerFunc {
 		}
 		s, err := d.Services.Create(r.Context(), tenantIDFrom(r.Context()), req.Name, req.Description, req.BasePrice, req.DurationMinutes)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("create service", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusCreated, s)
@@ -65,26 +67,16 @@ func updateServiceHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
-		// ensure service belongs to tenant
-		existing, err := d.Services.GetByID(r.Context(), id)
+		tenantID := tenantIDFrom(r.Context())
+		if err := d.Services.Update(r.Context(), tenantID, id, req.Name, req.Description, req.BasePrice, req.DurationMinutes, req.IsActive); err != nil {
+			d.Log.Error("update service", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		updated, err := d.Services.GetByID(r.Context(), tenantID, id)
 		if err != nil {
-			if mapServiceError(w, err) {
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if existing.TenantID != tenantIDFrom(r.Context()) {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-		if err := d.Services.Update(r.Context(), id, req.Name, req.Description, req.BasePrice, req.DurationMinutes, req.IsActive); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		updated, err := d.Services.GetByID(r.Context(), id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("get updated service", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, updated)

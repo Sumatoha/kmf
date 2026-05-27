@@ -33,6 +33,7 @@ type Deps struct {
 
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
+	r.Use(securityHeadersMiddleware)
 	r.Use(requestIDMiddleware)
 	r.Use(loggingMiddleware(d.Log))
 
@@ -51,11 +52,9 @@ func NewRouter(d Deps) http.Handler {
 	r.Get("/healthz", healthHandler(d))
 
 	r.Route("/api/v1", func(r chi.Router) {
-		// public
 		r.Post("/auth/login", loginHandler(d))
 		r.Post("/auth/register", registerHandler(d))
 
-		// protected (CRM)
 		r.Group(func(r chi.Router) {
 			r.Use(authMiddleware(d.Auth))
 
@@ -101,6 +100,15 @@ func NewRouter(d Deps) http.Handler {
 	})
 
 	return r
+}
+
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func healthHandler(d Deps) http.HandlerFunc {

@@ -4,13 +4,12 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-type UserRepo struct{ pool *pgxpool.Pool }
+type UserRepo struct{ pool DB }
 
-func NewUserRepo(pool *pgxpool.Pool) *UserRepo { return &UserRepo{pool: pool} }
+func NewUserRepo(pool DB) *UserRepo { return &UserRepo{pool: pool} }
 
 const userCols = "id, tenant_id, email, password_hash, full_name, role, is_active, created_at, updated_at"
 

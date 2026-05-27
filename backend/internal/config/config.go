@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -65,8 +64,8 @@ func (c *Config) validate() error {
 	if c.DatabaseURL == "" {
 		missing = append(missing, "DATABASE_URL")
 	}
-	if c.JWTSecret == "" || len(c.JWTSecret) < 16 {
-		missing = append(missing, "JWT_SECRET (>=16 bytes)")
+	if c.JWTSecret == "" || len(c.JWTSecret) < 32 {
+		missing = append(missing, "JWT_SECRET (>=32 bytes)")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required env vars: %s", strings.Join(missing, ", "))
@@ -112,4 +111,3 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	return d
 }
 
-var ErrMissingConfig = errors.New("missing required config")

@@ -5,13 +5,12 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-type ClientRepo struct{ pool *pgxpool.Pool }
+type ClientRepo struct{ pool DB }
 
-func NewClientRepo(pool *pgxpool.Pool) *ClientRepo { return &ClientRepo{pool: pool} }
+func NewClientRepo(pool DB) *ClientRepo { return &ClientRepo{pool: pool} }
 
 const clientCols = "id, tenant_id, telegram_id, telegram_username, full_name, phone, created_at, updated_at"
 
@@ -42,8 +41,8 @@ func (r *ClientRepo) GetByTelegram(ctx context.Context, tenantID uuid.UUID, tgID
 	return scanClient(row)
 }
 
-func (r *ClientRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.Client, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+clientCols+` FROM clients WHERE id = $1`, id)
+func (r *ClientRepo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*model.Client, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+clientCols+` FROM clients WHERE id = $1 AND tenant_id = $2`, id, tenantID)
 	return scanClient(row)
 }
 
@@ -75,7 +74,7 @@ func (r *ClientRepo) UpsertByPhone(ctx context.Context, tenantID uuid.UUID, phon
 	c, err := scanClient(row)
 	if err == nil {
 		if fullName != nil && (c.FullName == nil || *c.FullName == "") {
-			if e := r.UpdateContact(ctx, c.ID, fullName, nil); e != nil {
+			if e := r.UpdateContact(ctx, tenantID, c.ID, fullName, nil); e != nil {
 				return nil, e
 			}
 			c.FullName = fullName
@@ -92,11 +91,11 @@ func (r *ClientRepo) UpsertByPhone(ctx context.Context, tenantID uuid.UUID, phon
 	return scanClient(row)
 }
 
-func (r *ClientRepo) UpdateContact(ctx context.Context, id uuid.UUID, fullName, phone *string) error {
+func (r *ClientRepo) UpdateContact(ctx context.Context, tenantID, id uuid.UUID, fullName, phone *string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE clients
 		SET full_name = COALESCE($2, full_name),
 		    phone = COALESCE($3, phone)
-		WHERE id = $1`, id, fullName, phone)
+		WHERE id = $1 AND tenant_id = $4`, id, fullName, phone, tenantID)
 	return err
 }

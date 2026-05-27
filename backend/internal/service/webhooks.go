@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -54,16 +55,26 @@ type CreateWebhookInput struct {
 	Description *string
 }
 
-func (s *WebhookService) Create(ctx context.Context, in CreateWebhookInput) (*model.Webhook, error) {
+func (s *WebhookService) Create(ctx context.Context, in CreateWebhookInput) (*model.Webhook, string, error) {
 	parsed, err := url.Parse(in.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, errors.New("url must be http(s)")
+		return nil, "", errors.New("url must be http(s)")
+	}
+	if parsed.Hostname() == "" {
+		return nil, "", errors.New("url must have a hostname")
+	}
+	if isPrivateHost(parsed.Hostname()) {
+		return nil, "", errors.New("url must not point to a private address")
 	}
 	secret, err := generateSecret()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return s.repo.Create(ctx, in.TenantID, in.URL, secret, in.Events, in.Description)
+	hook, err := s.repo.Create(ctx, in.TenantID, in.URL, secret, in.Events, in.Description)
+	if err != nil {
+		return nil, "", err
+	}
+	return hook, secret, nil
 }
 
 func (s *WebhookService) List(ctx context.Context, tenantID uuid.UUID) ([]*model.Webhook, error) {
@@ -136,7 +147,7 @@ func (s *WebhookService) dispatchBatch(ctx context.Context, client *http.Client)
 }
 
 func (s *WebhookService) deliver(ctx context.Context, client *http.Client, d *model.WebhookDelivery) {
-	hook, err := s.repo.GetByID(ctx, d.WebhookID)
+	hook, err := s.repo.GetByID(ctx, d.TenantID, d.WebhookID)
 	if err != nil {
 		_ = s.repo.MarkRetry(ctx, d.ID, d.Attempts, nil, "lookup webhook: "+err.Error(), maxDeliveryAttempts)
 		return
@@ -162,7 +173,10 @@ func (s *WebhookService) deliver(ctx context.Context, client *http.Client, d *mo
 		_ = s.repo.MarkRetry(ctx, d.ID, d.Attempts, nil, err.Error(), maxDeliveryAttempts)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if err := s.repo.MarkSuccess(ctx, d.ID, resp.StatusCode); err != nil {
@@ -186,4 +200,22 @@ func generateSecret() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func isPrivateHost(host string) bool {
+	privates := []string{
+		"localhost", "127.0.0.1", "::1", "0.0.0.0",
+		"169.254.", "10.", "192.168.",
+		"172.16.", "172.17.", "172.18.", "172.19.",
+		"172.20.", "172.21.", "172.22.", "172.23.",
+		"172.24.", "172.25.", "172.26.", "172.27.",
+		"172.28.", "172.29.", "172.30.", "172.31.",
+		"metadata.google.internal",
+	}
+	for _, p := range privates {
+		if host == p || (len(p) > 1 && p[len(p)-1] == '.' && len(host) > len(p) && host[:len(p)] == p) {
+			return true
+		}
+	}
+	return false
 }

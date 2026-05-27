@@ -30,7 +30,7 @@ const requestIDHeader = "X-Request-ID"
 func requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqID := r.Header.Get(requestIDHeader)
-		if reqID == "" {
+		if _, err := uuid.Parse(reqID); err != nil {
 			reqID = uuid.NewString()
 		}
 		w.Header().Set(requestIDHeader, reqID)
@@ -86,7 +86,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 
 func (s *statusRecorder) Write(p []byte) (int, error) {
 	if !s.headerWritten {
-		s.headerWritten = true
+		s.WriteHeader(http.StatusOK)
 	}
 	return s.ResponseWriter.Write(p)
 }

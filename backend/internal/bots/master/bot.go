@@ -156,7 +156,7 @@ func (m *Bot) pauseHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: u.Message.Chat.ID, Text: "Сначала активируйтесь по пригласительной ссылке."})
 		return
 	}
-	if err := m.masters.SetAvailability(ctx, master.ID, false); err != nil {
+	if err := m.masters.SetAvailability(ctx, master.TenantID, master.ID, false); err != nil {
 		m.log.Error("set availability", "master_id", master.ID, "err", err)
 	}
 	shared.Send(ctx, m.log, b, &bot.SendMessageParams{
@@ -170,7 +170,7 @@ func (m *Bot) resumeHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: u.Message.Chat.ID, Text: "Сначала активируйтесь по пригласительной ссылке."})
 		return
 	}
-	if err := m.masters.SetAvailability(ctx, master.ID, true); err != nil {
+	if err := m.masters.SetAvailability(ctx, master.TenantID, master.ID, true); err != nil {
 		m.log.Error("set availability", "master_id", master.ID, "err", err)
 	}
 	shared.Send(ctx, m.log, b, &bot.SendMessageParams{
@@ -244,7 +244,7 @@ func (m *Bot) callbackOrder(ctx context.Context, b *bot.Bot, u *models.Update) {
 
 	switch action {
 	case "accept":
-		if _, err := m.orders.AcceptByMaster(ctx, orderID, master.ID); err != nil {
+		if _, err := m.orders.AcceptByMaster(ctx, master.TenantID, orderID, master.ID); err != nil {
 			if errors.Is(err, service.ErrInvalidState) {
 				shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Заказ уже взят другим мастером."})
 				return
@@ -259,7 +259,7 @@ func (m *Bot) callbackOrder(ctx context.Context, b *bot.Bot, u *models.Update) {
 		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Ок, заказ показан другим мастерам."})
 
 	case "start":
-		if _, err := m.orders.Start(ctx, orderID, master.ID); err != nil {
+		if _, err := m.orders.Start(ctx, master.TenantID, orderID, master.ID); err != nil {
 			if errors.Is(err, service.ErrInvalidState) {
 				shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Этот заказ нельзя начать сейчас."})
 				return
@@ -271,7 +271,7 @@ func (m *Bot) callbackOrder(ctx context.Context, b *bot.Bot, u *models.Update) {
 		shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Уборка начата."})
 
 	case "done":
-		if _, err := m.orders.Complete(ctx, orderID, master.ID); err != nil {
+		if _, err := m.orders.Complete(ctx, master.TenantID, orderID, master.ID); err != nil {
 			if errors.Is(err, service.ErrInvalidState) {
 				shared.Send(ctx, m.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Этот заказ уже не в работе."})
 				return

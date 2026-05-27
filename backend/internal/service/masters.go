@@ -26,8 +26,8 @@ type InviteMasterInput struct {
 }
 
 type InviteMasterResult struct {
-	Master *model.Master `json:"master"`
-	Token  string        `json:"invite_token"`
+	Master      *model.Master `json:"master"`
+	InviteToken string        `json:"invite_token"`
 }
 
 func (s *MasterService) Invite(ctx context.Context, in InviteMasterInput) (*InviteMasterResult, error) {
@@ -39,7 +39,7 @@ func (s *MasterService) Invite(ctx context.Context, in InviteMasterInput) (*Invi
 	if err != nil {
 		return nil, err
 	}
-	return &InviteMasterResult{Master: m, Token: token}, nil
+	return &InviteMasterResult{Master: m, InviteToken: token}, nil
 }
 
 func (s *MasterService) ActivateByInvite(ctx context.Context, token string, tgID int64, tgUsername *string) (*model.Master, error) {
@@ -54,8 +54,8 @@ func (s *MasterService) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([
 	return s.masters.ListByTenant(ctx, tenantID)
 }
 
-func (s *MasterService) SetAvailability(ctx context.Context, id uuid.UUID, available bool) error {
-	return s.masters.SetAvailability(ctx, id, available)
+func (s *MasterService) SetAvailability(ctx context.Context, tenantID, id uuid.UUID, available bool) error {
+	return s.masters.SetAvailability(ctx, tenantID, id, available)
 }
 
 func newInviteToken() (string, error) {

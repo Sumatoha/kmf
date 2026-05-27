@@ -4,13 +4,12 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sumatoha/kmf/backend/internal/model"
 )
 
-type ReviewRepo struct{ pool *pgxpool.Pool }
+type ReviewRepo struct{ pool DB }
 
-func NewReviewRepo(pool *pgxpool.Pool) *ReviewRepo { return &ReviewRepo{pool: pool} }
+func NewReviewRepo(pool DB) *ReviewRepo { return &ReviewRepo{pool: pool} }
 
 const reviewCols = "id, tenant_id, order_id, client_id, master_id, rating, comment, created_at"
 

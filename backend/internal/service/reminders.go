@@ -65,21 +65,21 @@ func (r *RemindersService) tick(ctx context.Context) {
 		return
 	}
 	for _, o := range orders {
-		client, err := r.clients.GetByID(ctx, o.ClientID)
+		client, err := r.clients.GetByID(ctx, o.TenantID, o.ClientID)
 		if err == nil {
 			text := fmt.Sprintf("⏰ Напоминание: уборка #%s через час, в %s",
 				shortID(o.ID.String()), o.ScheduledAt.Format("15:04"))
 			r.notifier.NotifyClientText(ctx, client, text)
 		}
 		if o.MasterID != nil {
-			m, err := r.masters.GetByID(ctx, *o.MasterID)
+			m, err := r.masters.GetByID(ctx, o.TenantID, *o.MasterID)
 			if err == nil {
 				text := fmt.Sprintf("⏰ Через час — заказ #%s по адресу: %s",
 					shortID(o.ID.String()), o.AddressText)
 				r.notifier.NotifyMasterText(ctx, m, text)
 			}
 		}
-		if err := r.orders.MarkReminded(ctx, o.ID); err != nil {
+		if err := r.orders.MarkReminded(ctx, o.TenantID, o.ID); err != nil {
 			r.log.Warn("reminders: mark", "order_id", o.ID, "err", err)
 		}
 	}

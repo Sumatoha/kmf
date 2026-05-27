@@ -57,7 +57,7 @@ func run() error {
 	sessionRepo := storage.NewSessionRepo(pool)
 	webhookRepo := storage.NewWebhookRepo(pool)
 
-	authSvc := service.NewAuthService(userRepo, tenantRepo, serviceRepo, cfg.JWTSecret, cfg.JWTTTL)
+	authSvc := service.NewAuthService(pool, userRepo, tenantRepo, serviceRepo, cfg.JWTSecret, cfg.JWTTTL)
 	masterSvc := service.NewMasterService(masterRepo)
 	webhookSvc := service.NewWebhookService(webhookRepo, log.With("svc", "webhook"))
 
@@ -127,6 +127,9 @@ func run() error {
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	var wg sync.WaitGroup

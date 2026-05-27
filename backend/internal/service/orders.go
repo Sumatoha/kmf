@@ -67,17 +67,13 @@ type CreateOrderInput struct {
 	Notes       *string
 }
 
-// Create books a new order and broadcasts it to available masters.
 func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (*model.Order, error) {
-	svc, err := s.services.GetByID(ctx, in.ServiceID)
+	svc, err := s.services.GetByID(ctx, in.TenantID, in.ServiceID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrServiceNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get service: %w", err)
-	}
-	if svc.TenantID != in.TenantID {
-		return nil, ErrServiceNotFound
 	}
 
 	order, err := s.orders.Create(ctx, storage.CreateOrderParams{
@@ -98,10 +94,6 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (*model.
 	return order, nil
 }
 
-// CreateManual is invoked by an admin to create an order on behalf of a client
-// who phoned in. clientID may be nil — in that case phone/fullName are used to
-// upsert a non-Telegram client. masterID may be nil (broadcast as usual) or set
-// (assigned directly).
 type CreateManualOrderInput struct {
 	TenantID    uuid.UUID
 	ClientID    *uuid.UUID
@@ -117,7 +109,14 @@ type CreateManualOrderInput struct {
 func (s *OrderService) CreateManual(ctx context.Context, in CreateManualOrderInput) (*model.Order, error) {
 	clientID := uuid.Nil
 	if in.ClientID != nil {
-		clientID = *in.ClientID
+		c, err := s.clients.GetByID(ctx, in.TenantID, *in.ClientID)
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, fmt.Errorf("client not found")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get client: %w", err)
+		}
+		clientID = c.ID
 	} else if in.ClientPhone != nil && *in.ClientPhone != "" {
 		c, err := s.clients.UpsertByPhone(ctx, in.TenantID, *in.ClientPhone, in.ClientName)
 		if err != nil {
@@ -140,7 +139,7 @@ func (s *OrderService) CreateManual(ctx context.Context, in CreateManualOrderInp
 		return nil, err
 	}
 	if in.MasterID != nil {
-		assigned, err := s.AssignByAdmin(ctx, order.ID, *in.MasterID)
+		assigned, err := s.AssignByAdmin(ctx, in.TenantID, order.ID, *in.MasterID)
 		if err != nil {
 			s.log.Warn("manual create: assign", "err", err)
 			return order, nil
@@ -150,8 +149,6 @@ func (s *OrderService) CreateManual(ctx context.Context, in CreateManualOrderInp
 	return order, nil
 }
 
-// broadcastToMasters notifies every available master in the tenant about a new
-// unassigned order. The first master who accepts wins (atomically via Assign).
 func (s *OrderService) broadcastToMasters(ctx context.Context, order *model.Order, svc *model.Service) {
 	masters, err := s.masters.ListAvailable(ctx, order.TenantID)
 	if err != nil {
@@ -165,48 +162,39 @@ func (s *OrderService) broadcastToMasters(ctx context.Context, order *model.Orde
 	}
 }
 
-// AssignByAdmin manually assigns a master to an order from the CRM, then
-// notifies the master and the client. Bypasses the broadcast/race flow.
-func (s *OrderService) AssignByAdmin(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
-	master, err := s.masters.GetByID(ctx, masterID)
+func (s *OrderService) AssignByAdmin(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
+	master, err := s.masters.GetByID(ctx, tenantID, masterID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrInvalidState
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get master: %w", err)
 	}
-	order, err := s.orders.AssignByAdmin(ctx, orderID, masterID)
+
+	order, err := s.orders.AssignByAdmin(ctx, tenantID, orderID, masterID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrInvalidState
 	}
 	if err != nil {
 		return nil, fmt.Errorf("assign by admin: %w", err)
 	}
-	if order.TenantID != master.TenantID {
-		return nil, ErrInvalidState
-	}
 
-	go func(ctx context.Context) {
-		svc, err := s.services.GetByID(ctx, order.ServiceID)
+	go func() {
+		bgCtx := context.Background()
+		svc, err := s.services.GetByID(bgCtx, tenantID, order.ServiceID)
 		if err != nil {
 			s.log.Warn("notify assigned: load service", "err", err)
 			return
 		}
-		if err := s.notifier.NotifyNewOrder(ctx, master, order, svc); err != nil {
+		if err := s.notifier.NotifyNewOrder(bgCtx, master, order, svc); err != nil {
 			s.log.Warn("notify assigned master", "err", err)
 		}
-	}(context.Background())
+	}()
 	return order, nil
 }
 
-// AcceptByMaster atomically claims an order for a master. Handles two cases:
-//
-//  1. status=new — broadcast flow: first to claim wins; we Assign then Confirm.
-//  2. status=assigned & master_id=us — admin pre-assigned this master; just Confirm.
-//
-// Returns ErrInvalidState if another master already grabbed it or it's terminal.
-func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
-	current, err := s.orders.GetByID(ctx, orderID)
+func (s *OrderService) AcceptByMaster(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
+	current, err := s.orders.GetByID(ctx, tenantID, orderID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrOrderNotFound
 	}
@@ -216,18 +204,18 @@ func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uui
 
 	switch current.Status {
 	case model.OrderStatusNew:
-		assigned, err := s.orders.Assign(ctx, orderID, masterID)
+		assigned, err := s.orders.Assign(ctx, tenantID, orderID, masterID)
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, ErrInvalidState
 		}
 		if err != nil {
 			return nil, fmt.Errorf("assign: %w", err)
 		}
-		confirmed, err := s.orders.Confirm(ctx, assigned.ID, masterID)
+		confirmed, err := s.orders.Confirm(ctx, tenantID, assigned.ID, masterID)
 		if err != nil {
 			return assigned, fmt.Errorf("confirm: %w", err)
 		}
-		s.notifyClient(ctx, confirmed, masterID)
+		s.notifyClient(ctx, tenantID, confirmed, masterID)
 		s.emit(confirmed.TenantID, EventOrderConfirmed, confirmed)
 		return confirmed, nil
 
@@ -235,11 +223,11 @@ func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uui
 		if current.MasterID == nil || *current.MasterID != masterID {
 			return nil, ErrInvalidState
 		}
-		confirmed, err := s.orders.Confirm(ctx, orderID, masterID)
+		confirmed, err := s.orders.Confirm(ctx, tenantID, orderID, masterID)
 		if err != nil {
 			return nil, fmt.Errorf("confirm: %w", err)
 		}
-		s.notifyClient(ctx, confirmed, masterID)
+		s.notifyClient(ctx, tenantID, confirmed, masterID)
 		s.emit(confirmed.TenantID, EventOrderConfirmed, confirmed)
 		return confirmed, nil
 
@@ -248,13 +236,13 @@ func (s *OrderService) AcceptByMaster(ctx context.Context, orderID, masterID uui
 	}
 }
 
-func (s *OrderService) notifyClient(ctx context.Context, order *model.Order, masterID uuid.UUID) {
-	client, err := s.clients.GetByID(ctx, order.ClientID)
+func (s *OrderService) notifyClient(ctx context.Context, tenantID uuid.UUID, order *model.Order, masterID uuid.UUID) {
+	client, err := s.clients.GetByID(ctx, tenantID, order.ClientID)
 	if err != nil {
 		s.log.Warn("notify client: load client", "err", err)
 		return
 	}
-	master, err := s.masters.GetByID(ctx, masterID)
+	master, err := s.masters.GetByID(ctx, tenantID, masterID)
 	if err != nil {
 		s.log.Warn("notify client: load master", "err", err)
 		return
@@ -264,49 +252,49 @@ func (s *OrderService) notifyClient(ctx context.Context, order *model.Order, mas
 	}
 }
 
-func (s *OrderService) Start(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
-	order, err := s.orders.Start(ctx, orderID, masterID)
+func (s *OrderService) Start(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
+	order, err := s.orders.Start(ctx, tenantID, orderID, masterID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrInvalidState
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("start order: %w", err)
 	}
-	if client, err := s.clients.GetByID(ctx, order.ClientID); err == nil {
+	if client, err := s.clients.GetByID(ctx, tenantID, order.ClientID); err == nil {
 		_ = s.notifier.NotifyOrderStartedToClient(ctx, client, order)
 	}
 	s.emit(order.TenantID, EventOrderStarted, order)
 	return order, nil
 }
 
-func (s *OrderService) Complete(ctx context.Context, orderID, masterID uuid.UUID) (*model.Order, error) {
-	order, err := s.orders.Complete(ctx, orderID, masterID)
+func (s *OrderService) Complete(ctx context.Context, tenantID, orderID, masterID uuid.UUID) (*model.Order, error) {
+	order, err := s.orders.Complete(ctx, tenantID, orderID, masterID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrInvalidState
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("complete order: %w", err)
 	}
 	if err := s.masters.IncrementCompletedAndUpdateRating(ctx, masterID); err != nil {
 		s.log.Warn("update master stats", "err", err)
 	}
-	if client, err := s.clients.GetByID(ctx, order.ClientID); err == nil {
+	if client, err := s.clients.GetByID(ctx, tenantID, order.ClientID); err == nil {
 		_ = s.notifier.NotifyOrderCompletedToClient(ctx, client, order)
 	}
 	s.emit(order.TenantID, EventOrderCompleted, order)
 	return order, nil
 }
 
-func (s *OrderService) Cancel(ctx context.Context, orderID uuid.UUID, reason string) (*model.Order, error) {
-	order, err := s.orders.Cancel(ctx, orderID, reason)
+func (s *OrderService) Cancel(ctx context.Context, tenantID, orderID uuid.UUID, reason string) (*model.Order, error) {
+	order, err := s.orders.Cancel(ctx, tenantID, orderID, reason)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrInvalidState
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cancel order: %w", err)
 	}
 	if order.MasterID != nil {
-		if m, err := s.masters.GetByID(ctx, *order.MasterID); err == nil {
+		if m, err := s.masters.GetByID(ctx, tenantID, *order.MasterID); err == nil {
 			_ = s.notifier.NotifyOrderCancelledToMaster(ctx, m, order)
 		}
 	}
@@ -315,6 +303,7 @@ func (s *OrderService) Cancel(ctx context.Context, orderID uuid.UUID, reason str
 }
 
 type SubmitReviewInput struct {
+	TenantID uuid.UUID
 	OrderID  uuid.UUID
 	ClientID uuid.UUID
 	Rating   int
@@ -322,12 +311,12 @@ type SubmitReviewInput struct {
 }
 
 func (s *OrderService) SubmitReview(ctx context.Context, in SubmitReviewInput) (*model.Review, error) {
-	order, err := s.orders.GetByID(ctx, in.OrderID)
+	order, err := s.orders.GetByID(ctx, in.TenantID, in.OrderID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrOrderNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get order: %w", err)
 	}
 	if order.ClientID != in.ClientID {
 		return nil, ErrOrderNotFound
@@ -337,10 +326,10 @@ func (s *OrderService) SubmitReview(ctx context.Context, in SubmitReviewInput) (
 	}
 	review, err := s.reviews.Create(ctx, order.TenantID, order.ID, order.ClientID, order.MasterID, in.Rating, in.Comment)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create review: %w", err)
 	}
 	if order.MasterID != nil {
-		_ = s.masters.IncrementCompletedAndUpdateRating(ctx, *order.MasterID)
+		_ = s.masters.UpdateRating(ctx, *order.MasterID)
 	}
 	s.emit(review.TenantID, EventReviewCreated, review)
 	return review, nil

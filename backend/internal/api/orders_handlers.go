@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"time"
 
@@ -15,11 +16,16 @@ func listOrdersHandler(d Deps) http.HandlerFunc {
 		var status *model.OrderStatus
 		if s := r.URL.Query().Get("status"); s != "" {
 			st := model.OrderStatus(s)
+			if !st.Valid() {
+				writeError(w, http.StatusBadRequest, "invalid status value")
+				return
+			}
 			status = &st
 		}
 		items, err := d.OrdersR.ListByTenant(r.Context(), tenantIDFrom(r.Context()), status, 200)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("list orders", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -33,16 +39,13 @@ func getOrderHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid id")
 			return
 		}
-		o, err := d.OrdersR.GetByID(r.Context(), id)
+		o, err := d.OrdersR.GetByID(r.Context(), tenantIDFrom(r.Context()), id)
 		if err != nil {
 			if mapServiceError(w, err) {
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if o.TenantID != tenantIDFrom(r.Context()) {
-			writeError(w, http.StatusNotFound, "not found")
+			d.Log.Error("get order", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, o)
@@ -139,26 +142,14 @@ func assignOrderHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid master_id")
 			return
 		}
-
-		existing, err := d.OrdersR.GetByID(r.Context(), id)
+		tenantID := tenantIDFrom(r.Context())
+		o, err := d.Orders.AssignByAdmin(r.Context(), tenantID, id, masterID)
 		if err != nil {
 			if mapServiceError(w, err) {
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if existing.TenantID != tenantIDFrom(r.Context()) {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-
-		o, err := d.Orders.AssignByAdmin(r.Context(), id, masterID)
-		if err != nil {
-			if mapServiceError(w, err) {
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("assign order", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, o)
@@ -177,25 +168,18 @@ func cancelOrderHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		var req cancelOrderReq
-		_ = decodeJSON(r, &req)
-		existing, err := d.OrdersR.GetByID(r.Context(), id)
+		if err := decodeJSON(r, &req); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		tenantID := tenantIDFrom(r.Context())
+		o, err := d.Orders.Cancel(r.Context(), tenantID, id, req.Reason)
 		if err != nil {
 			if mapServiceError(w, err) {
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if existing.TenantID != tenantIDFrom(r.Context()) {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-		o, err := d.Orders.Cancel(r.Context(), id, req.Reason)
-		if err != nil {
-			if mapServiceError(w, err) {
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.Log.Error("cancel order", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, o)
