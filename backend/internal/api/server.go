@@ -51,9 +51,11 @@ func NewRouter(d Deps) http.Handler {
 
 	r.Get("/healthz", healthHandler(d))
 
+	authLimiter := rateLimitMiddleware(5, 10)
+
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Post("/auth/login", loginHandler(d))
-		r.Post("/auth/register", registerHandler(d))
+		r.With(authLimiter).Post("/auth/login", loginHandler(d))
+		r.With(authLimiter).Post("/auth/register", registerHandler(d))
 
 		r.Group(func(r chi.Router) {
 			r.Use(authMiddleware(d.Auth))

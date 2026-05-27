@@ -143,6 +143,9 @@ func (c *Bot) callbackService(ctx context.Context, b *bot.Bot, u *models.Update)
 		c.log.Error("load session", "chat_id", chatID, "err", err)
 		return
 	}
+	if snap.State != stateChoosingService {
+		return
+	}
 	id := strings.TrimPrefix(cq.Data, "svc:")
 	snap.Data["service_id"] = id
 	snap.State = stateChoosingDate
@@ -179,6 +182,9 @@ func (c *Bot) callbackDate(ctx context.Context, b *bot.Bot, u *models.Update) {
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil {
 		c.log.Error("load session", "chat_id", chatID, "err", err)
+		return
+	}
+	if snap.State != stateChoosingDate {
 		return
 	}
 	snap.Data["date"] = strings.TrimPrefix(cq.Data, "date:")
@@ -221,6 +227,9 @@ func (c *Bot) callbackTime(ctx context.Context, b *bot.Bot, u *models.Update) {
 	snap, err := c.sessions.Load(ctx, chatID)
 	if err != nil {
 		c.log.Error("load session", "chat_id", chatID, "err", err)
+		return
+	}
+	if snap.State != stateChoosingTime {
 		return
 	}
 	snap.Data["hour"] = strings.TrimPrefix(cq.Data, "time:")
@@ -270,9 +279,9 @@ func (c *Bot) handleAddress(ctx context.Context, b *bot.Bot, u *models.Update, s
 
 func (c *Bot) handlePhone(ctx context.Context, b *bot.Bot, u *models.Update, snap *shared.Snapshot) {
 	chatID := u.Message.Chat.ID
-	phone := strings.TrimSpace(u.Message.Text)
-	if len(phone) < 6 {
-		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Телефон слишком короткий, попробуйте ещё раз:"})
+	phone := sanitizePhone(strings.TrimSpace(u.Message.Text))
+	if len(phone) < 6 || len(phone) > 20 {
+		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Неверный формат телефона. Пример: +7 900 000-00-00"})
 		return
 	}
 	if snap.TenantID == nil {
@@ -310,7 +319,11 @@ func (c *Bot) showConfirmation(ctx context.Context, b *bot.Bot, chatID int64, sn
 		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Услуга недоступна. Введите /book заново."})
 		return
 	}
-	scheduled, err := parseScheduled(dateStr, hourStr)
+	tz := ""
+	if tenant, err := c.tenants.GetByID(ctx, *snap.TenantID); err == nil {
+		tz = tenant.Timezone
+	}
+	scheduled, err := parseScheduled(dateStr, hourStr, tz)
 	if err != nil {
 		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Неверная дата/время, попробуйте /book снова."})
 		return
@@ -343,6 +356,9 @@ func (c *Bot) callbackConfirm(ctx context.Context, b *bot.Bot, u *models.Update)
 		c.log.Error("load session", "chat_id", chatID, "err", err)
 		return
 	}
+	if snap.State != stateConfirming {
+		return
+	}
 	if strings.TrimPrefix(cq.Data, "confirm:") == "no" {
 		if err := c.sessions.Reset(ctx, chatID); err != nil {
 			c.log.Warn("reset session", "chat_id", chatID, "err", err)
@@ -359,7 +375,11 @@ func (c *Bot) callbackConfirm(ctx context.Context, b *bot.Bot, u *models.Update)
 	hourStr, _ := snap.Data["hour"].(string)
 	addr, _ := snap.Data["address"].(string)
 
-	scheduled, err := parseScheduled(dateStr, hourStr)
+	tz := ""
+	if tenant, err := c.tenants.GetByID(ctx, *snap.TenantID); err == nil {
+		tz = tenant.Timezone
+	}
+	scheduled, err := parseScheduled(dateStr, hourStr, tz)
 	if err != nil {
 		shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: "Что-то пошло не так. Попробуйте /book снова."})
 		return
@@ -477,7 +497,7 @@ func (c *Bot) ordersHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 	shared.Send(ctx, c.log, b, &bot.SendMessageParams{ChatID: chatID, Text: sb.String()})
 }
 
-func parseScheduled(dateStr, hourStr string) (time.Time, error) {
+func parseScheduled(dateStr, hourStr, tz string) (time.Time, error) {
 	d, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
 		return time.Time{}, err
@@ -486,13 +506,28 @@ func parseScheduled(dateStr, hourStr string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return time.Date(d.Year(), d.Month(), d.Day(), h, 0, 0, 0, time.Local), nil
+	loc := time.UTC
+	if tz != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), h, 0, 0, 0, loc), nil
 }
 
-// Short returns the first 8 characters of an id for compact display.
 func Short(id string) string {
 	if len(id) > 8 {
 		return id[:8]
 	}
 	return id
+}
+
+func sanitizePhone(s string) string {
+	var buf []byte
+	for _, c := range []byte(s) {
+		if (c >= '0' && c <= '9') || c == '+' || c == '-' || c == ' ' || c == '(' || c == ')' {
+			buf = append(buf, c)
+		}
+	}
+	return string(buf)
 }

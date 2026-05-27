@@ -25,7 +25,7 @@ import (
 func main() {
 	var (
 		email    = flag.String("email", "", "admin email")
-		password = flag.String("password", "", "admin password (>= 6 chars)")
+		password = flag.String("password", "", "admin password (>= 8 chars)")
 		fullName = flag.String("name", "Admin", "full name")
 		slug     = flag.String("tenant-slug", "demo", "tenant slug to attach to")
 		role     = flag.String("role", "owner", "owner | admin | dispatcher")
@@ -35,8 +35,11 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	if len(*password) < 6 {
-		log.Fatal("password must be at least 6 characters")
+	if len(*password) < 8 {
+		log.Fatal("password must be at least 8 characters")
+	}
+	if !model.UserRole(*role).Valid() {
+		log.Fatalf("invalid role %q: must be owner, admin, or dispatcher", *role)
 	}
 
 	cfg, err := config.Load()
