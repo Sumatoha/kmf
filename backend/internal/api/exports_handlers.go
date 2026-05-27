@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/csv"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,11 +25,14 @@ func exportOrdersCSV(d Deps) http.HandlerFunc {
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 
 		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{
+		if err := cw.Write([]string{
 			"id", "status", "client_id", "service_id", "master_id",
 			"scheduled_at", "address", "price", "notes",
 			"created_at", "completed_at",
-		})
+		}); err != nil {
+			slog.Default().Error("csv header write", "err", err)
+			return
+		}
 		for _, o := range orders {
 			masterID := ""
 			if o.MasterID != nil {
@@ -42,7 +46,7 @@ func exportOrdersCSV(d Deps) http.HandlerFunc {
 			if o.CompletedAt != nil {
 				completed = o.CompletedAt.Format(time.RFC3339)
 			}
-			_ = cw.Write([]string{
+			if err := cw.Write([]string{
 				o.ID.String(),
 				string(o.Status),
 				o.ClientID.String(),
@@ -54,7 +58,10 @@ func exportOrdersCSV(d Deps) http.HandlerFunc {
 				notes,
 				o.CreatedAt.Format(time.RFC3339),
 				completed,
-			})
+			}); err != nil {
+				slog.Default().Error("csv row write", "err", err)
+				return
+			}
 		}
 		cw.Flush()
 	}
@@ -70,7 +77,10 @@ func exportClientsCSV(d Deps) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="clients.csv"`)
 		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"id", "full_name", "phone", "telegram_username", "telegram_id", "created_at"})
+		if err := cw.Write([]string{"id", "full_name", "phone", "telegram_username", "telegram_id", "created_at"}); err != nil {
+			slog.Default().Error("csv header write", "err", err)
+			return
+		}
 		for _, c := range clients {
 			fullName, phone, tgUser := "", "", ""
 			if c.FullName != nil {
@@ -86,7 +96,10 @@ func exportClientsCSV(d Deps) http.HandlerFunc {
 			if c.TelegramID != nil {
 				tgID = strconv.FormatInt(*c.TelegramID, 10)
 			}
-			_ = cw.Write([]string{c.ID.String(), fullName, phone, tgUser, tgID, c.CreatedAt.Format(time.RFC3339)})
+			if err := cw.Write([]string{c.ID.String(), fullName, phone, tgUser, tgID, c.CreatedAt.Format(time.RFC3339)}); err != nil {
+				slog.Default().Error("csv row write", "err", err)
+				return
+			}
 		}
 		cw.Flush()
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sumatoha/kmf/backend/internal/model"
 	"github.com/sumatoha/kmf/backend/internal/service"
 	"github.com/sumatoha/kmf/backend/internal/storage"
 )
@@ -37,7 +38,7 @@ func NewRouter(d Deps) http.Handler {
 
 	origins := d.CORSOrigins
 	if len(origins) == 0 {
-		origins = []string{"*"}
+		origins = []string{"http://localhost:3000"}
 	}
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   origins,
@@ -62,8 +63,8 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Route("/services", func(r chi.Router) {
 				r.Get("/", listServicesHandler(d))
-				r.Post("/", createServiceHandler(d))
-				r.Patch("/{id}", updateServiceHandler(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Post("/", createServiceHandler(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Patch("/{id}", updateServiceHandler(d))
 			})
 
 			r.Route("/clients", func(r chi.Router) {
@@ -72,27 +73,27 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Route("/masters", func(r chi.Router) {
 				r.Get("/", listMastersHandler(d))
-				r.Post("/invite", inviteMasterHandler(d))
-				r.Patch("/{id}/availability", setMasterAvailabilityHandler(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Post("/invite", inviteMasterHandler(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Patch("/{id}/availability", setMasterAvailabilityHandler(d))
 			})
 
 			r.Route("/orders", func(r chi.Router) {
 				r.Get("/", listOrdersHandler(d))
 				r.Post("/", createOrderHandler(d))
 				r.Get("/{id}", getOrderHandler(d))
-				r.Post("/{id}/assign", assignOrderHandler(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Post("/{id}/assign", assignOrderHandler(d))
 				r.Post("/{id}/cancel", cancelOrderHandler(d))
 			})
 
 			r.Route("/webhooks", func(r chi.Router) {
-				r.Get("/", listWebhooksHandler(d))
-				r.Post("/", createWebhookHandler(d))
-				r.Delete("/{id}", deleteWebhookHandler(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Get("/", listWebhooksHandler(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Post("/", createWebhookHandler(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Delete("/{id}", deleteWebhookHandler(d))
 			})
 
 			r.Route("/exports", func(r chi.Router) {
-				r.Get("/orders.csv", exportOrdersCSV(d))
-				r.Get("/clients.csv", exportClientsCSV(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Get("/orders.csv", exportOrdersCSV(d))
+				r.With(requireRole(model.RoleOwner, model.RoleAdmin)).Get("/clients.csv", exportClientsCSV(d))
 			})
 
 			r.Get("/dashboard/stats", dashboardStatsHandler(d))

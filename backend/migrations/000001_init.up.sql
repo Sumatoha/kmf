@@ -18,8 +18,8 @@ CREATE TABLE tenants (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug        TEXT NOT NULL UNIQUE,
     name        TEXT NOT NULL,
-    timezone    TEXT NOT NULL DEFAULT 'Europe/Moscow',
-    currency    TEXT NOT NULL DEFAULT 'RUB',
+    timezone    TEXT NOT NULL DEFAULT 'Asia/Almaty',
+    currency    TEXT NOT NULL DEFAULT 'KZT',
     is_active   BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()

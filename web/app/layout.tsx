@@ -1,23 +1,32 @@
 import type { Metadata } from "next";
+import { Inter, Lora, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Toaster } from "sonner";
 
-export const metadata: Metadata = {
-  title: "CleanOps — CRM для клининговых компаний",
-  description: "Управление заказами, мастерами и клиентами через Telegram-боты",
-};
+const inter = Inter({
+  subsets: ["latin", "cyrillic"],
+  display: "swap",
+  variable: "--font-inter",
+});
+const lora = Lora({
+  subsets: ["latin", "cyrillic"],
+  weight: "400",
+  style: ["italic"],
+  display: "swap",
+  variable: "--font-lora",
+});
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-mono",
+});
 
-const themeInitScript = `
-  (function() {
-    try {
-      var stored = localStorage.getItem('cleanops.theme');
-      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      var theme = stored || (prefersDark ? 'dark' : 'light');
-      document.documentElement.dataset.theme = theme;
-    } catch (_) {}
-  })();
-`;
+export const metadata: Metadata = {
+  title: "CleanOps — операционная система для клининговых команд",
+  description:
+    "Канбан, расписание команд, чек-листы с фото-отчётом и Telegram-боты для клиентов и клинеров. Запуск за 15 минут.",
+};
 
 export default function RootLayout({
   children,
@@ -25,11 +34,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ru" suppressHydrationWarning>
+    <html
+      lang="ru"
+      data-theme="light"
+      suppressHydrationWarning
+      className={`${inter.variable} ${lora.variable} ${mono.variable}`}
+    >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem("cleanops.theme");if(t)document.documentElement.dataset.theme=t}catch(e){}`,
+          }}
+        />
       </head>
-      <body>
+      <body className="font-sans">
         <Providers>{children}</Providers>
         <Toaster position="top-right" richColors />
       </body>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/sumatoha/kmf/backend/internal/model"
@@ -36,7 +37,9 @@ func (s *Sessions) Load(ctx context.Context, chatID int64) (*Snapshot, error) {
 	}
 	out := &Snapshot{State: sess.State, TenantID: sess.TenantID, Data: map[string]any{}}
 	if len(sess.Data) > 0 {
-		_ = json.Unmarshal(sess.Data, &out.Data)
+		if err := json.Unmarshal(sess.Data, &out.Data); err != nil {
+			slog.Default().Warn("session data unmarshal failed, resetting", "chat_id", chatID, "err", err)
+		}
 		if out.Data == nil {
 			out.Data = map[string]any{}
 		}

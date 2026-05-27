@@ -82,7 +82,11 @@ func updateServiceHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		updated, _ := d.Services.GetByID(r.Context(), id)
+		updated, err := d.Services.GetByID(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, updated)
 	}
 }

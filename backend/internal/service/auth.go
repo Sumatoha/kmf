@@ -144,7 +144,9 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*LoginRes
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 	if s.services != nil {
-		seedDefaultServices(ctx, s.services, tenant.ID)
+		if err := seedDefaultServices(ctx, s.services, tenant.ID); err != nil {
+			return nil, fmt.Errorf("seed services: %w", err)
+		}
 	}
 	tok, err := s.issue(user)
 	if err != nil {
@@ -155,7 +157,7 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*LoginRes
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$`)
 
-func seedDefaultServices(ctx context.Context, repo *storage.ServiceRepo, tenantID uuid.UUID) {
+func seedDefaultServices(ctx context.Context, repo *storage.ServiceRepo, tenantID uuid.UUID) error {
 	defaults := []struct {
 		name     string
 		desc     string
@@ -168,8 +170,11 @@ func seedDefaultServices(ctx context.Context, repo *storage.ServiceRepo, tenantI
 	}
 	for _, d := range defaults {
 		desc := d.desc
-		_, _ = repo.Create(ctx, tenantID, d.name, &desc, d.price, d.duration)
+		if _, err := repo.Create(ctx, tenantID, d.name, &desc, d.price, d.duration); err != nil {
+			return fmt.Errorf("seed %q: %w", d.name, err)
+		}
 	}
+	return nil
 }
 
 func HashPassword(password string) (string, error) {

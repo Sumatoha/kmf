@@ -1,76 +1,201 @@
-import { Building2, Link2, MessageCircle, Sparkles } from "lucide-react";
+"use client";
 
-const STEPS = [
+import { CheckCircle2 } from "lucide-react";
+import { motion } from "motion/react";
+import { AvatarStack, SectionTitle, TEAM } from "./primitives";
+import { Reveal, StaggerContainer, StaggerItem, slideInLeft, slideInRight } from "./motion";
+
+type Card = {
+  id: string;
+  title: string;
+  team: number[];
+  pr: "low" | "med" | "high";
+  prog?: number;
+};
+
+type Col = {
+  title: string;
+  count: number;
+  color: string;
+  cards: Card[];
+};
+
+const COLS: Col[] = [
   {
-    icon: Building2,
-    title: "Регистрируете компанию",
-    desc: "5 минут: название, логотип, ваш прайс на услуги. Готово.",
+    title: "Новые",
+    count: 4,
+    color: "var(--color-muted)",
+    cards: [
+      { id: "CO-4821", title: "Kaspi HQ · Достык 38", team: [0, 1], pr: "med" },
+      { id: "CO-4822", title: "ЖК Esentai Apartments", team: [], pr: "high" },
+    ],
   },
   {
-    icon: Link2,
-    title: "Получаете 2 ссылки",
-    desc: "Ссылка для клиентов и пригласительные ссылки для мастеров — раздаёте.",
+    title: "Назначены",
+    count: 6,
+    color: "var(--color-moss)",
+    cards: [
+      { id: "CO-4824", title: "Magnum Cash & Carry", team: [4], pr: "low" },
+      { id: "CO-4823", title: "Choco-Family · ул. Маркова", team: [2, 3], pr: "high" },
+    ],
   },
   {
-    icon: MessageCircle,
-    title: "Клиенты пишут боту",
-    desc: "Выбирают услугу, дату, адрес. Бот собирает заявку без оператора.",
+    title: "В пути",
+    count: 3,
+    color: "#1E5A85",
+    cards: [{ id: "CO-4825", title: "Loft 88м² · Бостандык", team: [2, 6], pr: "high" }],
   },
   {
-    icon: Sparkles,
-    title: "Мастер делает уборку",
-    desc: "Принимает заказ, отмечает выполнение. Клиент получает уведомления.",
+    title: "Идёт уборка",
+    count: 8,
+    color: "var(--color-mint-deep)",
+    cards: [
+      { id: "CO-4826", title: "Beeline · 12 этаж", team: [0, 5], pr: "med", prog: 100 },
+      { id: "CO-4827", title: "Sulpak Розыбакиева", team: [1], pr: "med", prog: 75 },
+    ],
   },
+  {
+    title: "Проверка",
+    count: 2,
+    color: "var(--color-warn)",
+    cards: [{ id: "CO-4828", title: "Студия 24м² · Самал", team: [7], pr: "low" }],
+  },
+  {
+    title: "Завершено",
+    count: 23,
+    color: "var(--color-ok)",
+    cards: [{ id: "CO-4830", title: "Townhouse · Горный гигант", team: [2, 6, 0], pr: "high" }],
+  },
+];
+
+const BENEFITS = [
+  "Авто-переходы по событиям из бота",
+  "Drag & drop с уведомлением мастеру в Telegram",
+  "Ручное назначение для частных клиентов",
+  "Фильтры по тегам, SLA, типу уборки",
 ];
 
 export function HowItWorks() {
   return (
-    <section id="how" className="py-24 sm:py-32 relative overflow-hidden">
-      <div
-        aria-hidden
-        className="absolute inset-0 bg-dots [mask-image:radial-gradient(ellipse_at_center,black,transparent_75%)] pointer-events-none"
-      />
-
-      <div className="relative max-w-6xl mx-auto px-4">
-        <div className="text-center max-w-2xl mx-auto">
-          <div className="inline-block text-xs font-semibold uppercase tracking-widest text-[var(--color-brand-700)]">
-            Как это работает
-          </div>
-          <h2 className="mt-3 text-4xl sm:text-5xl font-bold tracking-tight leading-tight">
-            От нуля до первого заказа —{" "}
-            <span className="gradient-text">за&nbsp;один&nbsp;день</span>
-          </h2>
-          <p className="mt-4 text-lg text-[var(--color-text-muted)]">
-            Никаких внедрений и обучений. Запускаетесь сами, без подрядчиков.
-          </p>
-        </div>
-
-        <div className="mt-16 relative">
-          {/* connecting line */}
-          <div
-            aria-hidden
-            className="hidden lg:block absolute top-12 left-12 right-12 h-px bg-gradient-to-r from-transparent via-emerald-300 to-transparent"
-          />
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {STEPS.map((s, i) => {
-              const Icon = s.icon;
-              return (
-                <div key={s.title} className="relative">
-                  <div className="size-12 rounded-2xl bg-white border-2 border-[var(--color-brand-500)] grid place-items-center text-[var(--color-brand-700)] relative z-10 shadow-sm">
-                    <Icon className="size-5" />
-                    <div className="absolute -top-2 -right-2 size-6 rounded-full bg-[var(--color-brand-600)] text-white text-xs font-bold grid place-items-center">
-                      {i + 1}
+    <section id="kanban" className="relative py-24 sm:py-28">
+      <div className="max-w-6xl mx-auto px-6">
+        <div className="grid lg:grid-cols-[1fr_1.4fr] gap-12 lg:gap-14 items-center">
+          <Reveal variants={slideInLeft}>
+            <div>
+              <SectionTitle
+                eyebrow="Канбан"
+                title={
+                  <>
+                    Заказы движутся{" "}
+                    <span className="gradient-text">
+                      сами по&nbsp;себе
+                    </span>
+                  </>
+                }
+                sub="Мастер принял заказ в боте → карточка ушла в «Назначен». Отметил «Выехал» → в «В пути». Подтвердил выполнение → в «Проверку». Ни одного клика менеджера."
+              />
+              <StaggerContainer className="mt-8 flex flex-col gap-3" staggerDelay={0.1}>
+                {BENEFITS.map((x) => (
+                  <StaggerItem key={x}>
+                    <div className="flex gap-2.5 items-start text-[14px] text-[color:var(--color-ink-2)]">
+                      <CheckCircle2
+                        className="size-[18px] shrink-0 mt-0.5"
+                        style={{ color: "var(--color-moss)" }}
+                        strokeWidth={2}
+                      />
+                      <span>{x}</span>
                     </div>
-                  </div>
-                  <h3 className="mt-5 text-lg font-bold tracking-tight">{s.title}</h3>
-                  <p className="mt-1.5 text-sm text-[var(--color-text-muted)]">{s.desc}</p>
-                </div>
-              );
-            })}
-          </div>
+                  </StaggerItem>
+                ))}
+              </StaggerContainer>
+            </div>
+          </Reveal>
+
+          <Reveal variants={slideInRight}>
+            <KanbanBoard />
+          </Reveal>
         </div>
       </div>
     </section>
+  );
+}
+
+function KanbanBoard() {
+  return (
+    <motion.div
+      className="rounded-[20px] border bg-white p-4 shadow-[var(--shadow-xl)] overflow-hidden"
+      whileHover={{ boxShadow: "0 32px 64px -20px rgba(15, 42, 26, 0.22), 0 8px 24px rgba(15, 42, 26, 0.08)" }}
+      transition={{ duration: 0.3 }}
+    >
+      <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
+        {COLS.map((col, i) => (
+          <motion.div
+            key={col.title}
+            className="rounded-xl surface-2 p-2"
+            style={{ minHeight: 320 }}
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ delay: i * 0.06, duration: 0.5 }}
+          >
+            <div className="flex items-center justify-between mb-2 px-1">
+              <div className="flex items-center gap-1.5">
+                <span className="size-1.5 rounded-full" style={{ background: col.color }} />
+                <span className="text-[11px] font-bold tracking-tight">{col.title}</span>
+              </div>
+              <span className="text-[10px] text-[color:var(--color-muted)]">{col.count}</span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {col.cards.map((c, j) => (
+                <motion.div
+                  key={c.id}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  whileInView={{ opacity: 1, scale: 1 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: i * 0.06 + j * 0.08, duration: 0.4 }}
+                >
+                  <KanbanCard card={c} />
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
+function KanbanCard({ card }: { card: Card }) {
+  return (
+    <motion.div
+      className="bg-white border rounded-[10px] p-2 text-[10px] cursor-default"
+      whileHover={{ y: -2, boxShadow: "0 4px 14px rgba(15, 42, 26, 0.08)" }}
+      transition={{ duration: 0.2 }}
+    >
+      <div className="flex justify-between items-center mb-1">
+        <span className="mono text-[9px] text-[color:var(--color-muted)]">{card.id}</span>
+        {card.pr === "high" && (
+          <motion.span
+            className="size-1 rounded-full"
+            style={{ background: "var(--color-err)" }}
+            animate={{ scale: [1, 1.3, 1] }}
+            transition={{ duration: 2, repeat: Infinity }}
+          />
+        )}
+      </div>
+      <div className="text-[10.5px] font-medium leading-tight mb-1.5">{card.title}</div>
+      <div className="flex items-center justify-between">
+        {card.team.length > 0 ? (
+          <AvatarStack people={card.team.map((idx) => TEAM[idx])} size={16} max={3} />
+        ) : (
+          <span className="text-[9px] text-[color:var(--color-muted)]">не назначен</span>
+        )}
+        {card.prog !== undefined && (
+          <span className="text-[9px] font-bold" style={{ color: "var(--color-moss)" }}>
+            {card.prog}%
+          </span>
+        )}
+      </div>
+    </motion.div>
   );
 }
